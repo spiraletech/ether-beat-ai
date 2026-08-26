@@ -1,0 +1,61 @@
+# Build products
+/build/
+/out/
+/cmake-build-*/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.obj
+*.lib
+
+# IDE
+.vs/
+.vscode/
+.idea/
+
+# Python / inference environments
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# PRIVATE ETHERBEAT MATERIAL — NEVER COMMIT
+/private/
+/corpus/
+/datasets/
+/training/
+/checkpoints/
+/models/
+/loras/
+/weights/
+/voices/
+/stems/
+/prompts/private/
+/taste-db/
+/generated-private/
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.gguf
+
+# Local configuration / secrets
+.env
+.env.*
+!.env.example
+config.local.json
+secrets.json
+
+# Generated artifacts
+/generated/
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini

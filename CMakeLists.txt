@@ -10,6 +10,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(CTest)
+
 option(ETHERBEAT_BUILD_CLI "Build the portable command-line harness" ON)
 option(ETHERBEAT_BUILD_WIN32 "Build the native Windows shell" ON)
 
@@ -53,5 +55,17 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
 
     if(MSVC)
         target_compile_options(EtherBeat PRIVATE /W4 /permissive- /utf-8)
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_executable(etherbeat_core_smoke tests/CoreSmoke.cpp)
+    target_link_libraries(etherbeat_core_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_core_smoke COMMAND etherbeat_core_smoke)
+
+    if(MSVC)
+        target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

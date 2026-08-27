@@ -38,10 +38,13 @@ int main() {
             return 1;
         }
 
-        std::ifstream metadata{artifact.metadata_path};
-        const std::string text{
-            std::istreambuf_iterator<char>{metadata},
-            std::istreambuf_iterator<char>{}};
+        std::string text;
+        {
+            std::ifstream metadata{artifact.metadata_path};
+            text.assign(
+                std::istreambuf_iterator<char>{metadata},
+                std::istreambuf_iterator<char>{});
+        }
 
         if (text.find("etherbeat smoke test") == std::string::npos ||
             text.find("\"seed\": 1444") == std::string::npos) {

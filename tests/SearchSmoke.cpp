@@ -1,4 +1,5 @@
 #include "etherbeat/EtherDNA.hpp"
+#include "etherbeat/EtherPromote.hpp"
 #include "etherbeat/EtherSearch.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
@@ -63,11 +64,12 @@ int main() {
         request.bpm = 68.0;
         request.key = "F# minor";
 
-        const std::array<etherbeat::AudioAnalysis, 4> staged = {
+        const std::array<etherbeat::AudioAnalysis, 5> staged = {
             make_analysis(0.90f, 0.10f, 0.90f, 0.90f, 0.05f, 0.025f),
             make_analysis(0.58f, 0.38f, 0.52f, 0.62f, 0.18f, 0.008f),
             make_analysis(0.38f, 0.58f, 0.24f, 0.53f, 0.42f, -0.004f),
-            etherbeat::AudioAnalysis{}
+            etherbeat::AudioAnalysis{},
+            make_analysis(0.40f, 0.57f, 0.25f, 0.52f, 0.41f, -0.004f)
         };
 
         std::size_t analyzer_call = 0;
@@ -148,6 +150,48 @@ int main() {
             report.critic_report.ranked.back().candidate_index != 3u ||
             report.critic_report.ranked.back().dna_available) {
             std::cerr << "EtherSearch did not hand measured candidates to EtherCritic correctly\n";
+            return 1;
+        }
+
+        // The winning draft is now promoted through the Quality role. It must
+        // preserve the winning seed, render into a separate directory, receive
+        // fresh analysis/DNA, and record measurable preservation lineage.
+        etherbeat::EtherPromote promote;
+        const auto promotion = promote.run(router, report, request, output, analyzer);
+
+        if (!promotion.succeeded() ||
+            promotion.source_candidate_index != 2u ||
+            promotion.source_seed != report.winner_seed ||
+            promotion.quality_artifact.resolved_seed != report.winner_seed ||
+            promotion.quality_artifact.audio_path == report.winner_audio_path ||
+            !std::filesystem::exists(promotion.quality_artifact.audio_path) ||
+            !std::filesystem::exists(promotion.quality_artifact.metadata_path) ||
+            !std::filesystem::exists(etherbeat::ether_dna_sidecar_path(promotion.quality_artifact.audio_path)) ||
+            !std::filesystem::exists(promotion.manifest_path) ||
+            promotion.dna_preservation_score < 0.95) {
+            std::cerr << "EtherPromote did not produce a grounded Quality render from the Search winner\n";
+            return 1;
+        }
+
+        const auto qualityMetadata = read_text(promotion.quality_artifact.metadata_path);
+        if (qualityMetadata.find("\"render_intent\": \"quality\"") == std::string::npos ||
+            qualityMetadata.find("Quality promotion target from winning draft") == std::string::npos ||
+            qualityMetadata.find("reference DNA") == std::string::npos) {
+            std::cerr << "EtherPromote Quality request lost winner DNA/role lineage\n";
+            return 1;
+        }
+
+        const auto promoteManifest = read_text(promotion.manifest_path);
+        if (promoteManifest.find("\"schema\": \"etherbeat.promote.v1\"") == std::string::npos ||
+            promoteManifest.find("\"source_candidate_index\": 2") == std::string::npos ||
+            promoteManifest.find("\"quality_generated\": true") == std::string::npos ||
+            promoteManifest.find("\"quality_dna_persisted\": true") == std::string::npos) {
+            std::cerr << "EtherPromote manifest is missing Quality promotion lineage\n";
+            return 1;
+        }
+
+        if (analyzer_call != staged.size()) {
+            std::cerr << "EtherSearch + EtherPromote did not execute the expected analysis count\n";
             return 1;
         }
 

@@ -4,6 +4,7 @@
 
 #include "etherbeat/AudioAnalysis.hpp"
 #include "etherbeat/AceStepEngineManager.hpp"
+#include "etherbeat/EtherControlUi.hpp"
 #include "etherbeat/EtherSearch.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/ModelRouter.hpp"
@@ -51,9 +52,20 @@ constexpr int ID_BPM = 2002;
 constexpr int ID_KEY = 2003;
 constexpr int ID_DURATION = 2004;
 constexpr int ID_SEED = 2005;
+constexpr int ID_CONTROL_PROMPT = 2010;
+constexpr int ID_CONTROL_STRENGTH = 2011;
+constexpr int ID_CONTROL_START = 2012;
+constexpr int ID_CONTROL_END = 2013;
 
 enum class Screen { Home, Create, Library, NowPlaying, SongLab, Engine };
-enum class WorkKind { None, Generate, AnalyzeReference, AnalyzeGenerated, EngineCheck };
+enum class WorkKind {
+    None,
+    Generate,
+    AnalyzeReference,
+    EngineCheck,
+    ControlVariation,
+    ControlReplace
+};
 
 enum Action {
     ActTabHome = 1,
@@ -69,6 +81,8 @@ enum Action {
     ActStop,
     ActStartEngine,
     ActOpenRuntime,
+    ActVariation,
+    ActReplaceSection,
     ActLibraryBase = 1000
 };
 
@@ -81,6 +95,10 @@ HWND g_bpm{};
 HWND g_key{};
 HWND g_duration{};
 HWND g_seed{};
+HWND g_controlPrompt{};
+HWND g_controlStrength{};
+HWND g_controlStart{};
+HWND g_controlEnd{};
 HFONT g_uiFont{};
 HFONT g_promptFont{};
 HBRUSH g_editBrush{};
@@ -91,7 +109,8 @@ std::vector<HitZone> g_hits;
 std::vector<fs::path> g_library;
 fs::path g_nowPlaying;
 fs::path g_reference;
-etherbeat::AudioAnalysis g_analysis{};
+etherbeat::AudioAnalysis g_nowAnalysis{};
+etherbeat::AudioAnalysis g_referenceAnalysis{};
 std::wstring g_status = L"ETHERBEAT // READY";
 std::atomic<bool> g_working{false};
 std::mutex g_resultMutex;
@@ -111,7 +130,8 @@ Color pink(BYTE a = 255) { return Color(a, 225, 55, 151); }
 
 RectF R(float x, float y, float w, float h) { return RectF(x, y, w, h); }
 
-void roundRect(Graphics& g, const RectF& r, float radius, Color fill, Color stroke = Color(0, 0, 0, 0), float strokeWidth = 1.f) {
+void roundRect(Graphics& g, const RectF& r, float radius, Color fill,
+               Color stroke = Color(0, 0, 0, 0), float strokeWidth = 1.f) {
     GraphicsPath p;
     const float d = radius * 2.f;
     p.AddArc(r.X, r.Y, d, d, 180.f, 90.f);
@@ -147,6 +167,7 @@ bool hit(const RectF& r, int x, int y) {
 }
 
 std::wstring getText(HWND control) {
+    if (!control) return {};
     const int n = GetWindowTextLengthW(control);
     std::vector<wchar_t> buffer(static_cast<std::size_t>(n) + 1u, L'\0');
     GetWindowTextW(control, buffer.data(), static_cast<int>(buffer.size()));
@@ -211,11 +232,15 @@ void refreshLibrary() {
     g_library.clear();
     std::error_code ec;
     const auto root = libraryRoot();
-    for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
-        if (ec || !entry.is_regular_file(ec)) continue;
+    for (const auto& entry : fs::recursive_directory_iterator(
+             root, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec) break;
+        if (!entry.is_regular_file(ec)) continue;
         auto ext = entry.path().extension().wstring();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
-        if (ext == L".wav" || ext == L".mp3" || ext == L".flac") g_library.push_back(entry.path());
+        if (ext == L".wav" || ext == L".mp3" || ext == L".flac") {
+            g_library.push_back(entry.path());
+        }
     }
     std::sort(g_library.begin(), g_library.end(), [](const fs::path& a, const fs::path& b) {
         std::error_code ea, eb;
@@ -228,14 +253,34 @@ void refreshLibrary() {
 
 void showCreateControls(bool show) {
     const int cmd = show ? SW_SHOW : SW_HIDE;
-    for (HWND h : {g_prompt, g_bpm, g_key, g_duration, g_seed}) if (h) ShowWindow(h, cmd);
+    for (HWND h : {g_prompt, g_bpm, g_key, g_duration, g_seed}) {
+        if (h) ShowWindow(h, cmd);
+    }
+}
+
+void showControlControls(bool show) {
+    const int cmd = show ? SW_SHOW : SW_HIDE;
+    for (HWND h : {g_controlPrompt, g_controlStrength, g_controlStart, g_controlEnd}) {
+        if (h) ShowWindow(h, cmd);
+    }
 }
 
 void setScreen(Screen screen) {
     g_screen = screen;
     showCreateControls(screen == Screen::Create);
+    showControlControls(screen == Screen::NowPlaying && !g_nowPlaying.empty());
     if (screen == Screen::Library) refreshLibrary();
     InvalidateRect(g_window, nullptr, FALSE);
+}
+
+void syncControlWindowToTrack() {
+    if (!g_controlStart || !g_controlEnd) return;
+    SetWindowTextW(g_controlStart, L"0.00");
+    const double duration = g_nowAnalysis.ready ? g_nowAnalysis.duration_seconds : 8.0;
+    const double end = std::clamp(duration, 0.25, 8.0);
+    std::wostringstream value;
+    value << std::fixed << std::setprecision(2) << end;
+    SetWindowTextW(g_controlEnd, value.str().c_str());
 }
 
 std::wstring chooseAudio(HWND owner) {
@@ -323,15 +368,70 @@ void startGenerate() {
             }
 
             const auto analysis = etherbeat::analyze_audio_file(result.winner_audio_path);
-            postWork(
-                WorkKind::Generate,
-                true,
-                L"",
-                result.winner_audio_path,
-                analysis,
-                result.winner_seed);
+            postWork(WorkKind::Generate, true, L"", result.winner_audio_path,
+                     analysis, result.winner_seed);
         } catch (const std::exception& e) {
             postWork(WorkKind::Generate, false, wide(e.what()), {}, {}, 0);
+        }
+    }).detach();
+}
+
+void startControl(etherbeat::ControlUiAction action) {
+    if (g_working.load()) return;
+    if (g_nowPlaying.empty() || !fs::exists(g_nowPlaying)) {
+        MessageBoxW(g_window, L"Load a track into Now Playing first.", L"ETHERCONTROL",
+                    MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    etherbeat::ControlUiInput input;
+    input.source_audio = g_nowPlaying;
+    input.instruction = utf8(getText(g_controlPrompt));
+    input.reference_strength = parseDouble(g_controlStrength, 0.80, 0.0, 1.0);
+    input.edit_start_seconds = parseDouble(g_controlStart, 0.0, 0.0, 600.0);
+    input.edit_end_seconds = parseDouble(g_controlEnd, 8.0, 0.0, 600.0);
+    input.source_duration_seconds = g_nowAnalysis.ready
+        ? g_nowAnalysis.duration_seconds
+        : std::max(10.0, input.edit_end_seconds);
+    input.seed = 0;
+    input.bpm = parseDouble(g_bpm, 0.0, 0.0, 300.0);
+    input.key = utf8(getText(g_key));
+
+    etherbeat::GenerationRequest request;
+    try {
+        request = etherbeat::make_control_ui_request(action, input);
+    } catch (const std::exception& e) {
+        MessageBoxW(g_window, wide(e.what()).c_str(), L"ETHERCONTROL",
+                    MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    if (g_working.exchange(true)) return;
+    stopPlayback();
+
+    const bool replace = action == etherbeat::ControlUiAction::ReplaceSection;
+    setStatus(replace
+        ? L"ETHERCONTROL // repainting selected section..."
+        : L"ETHERCONTROL // generating controlled variation...");
+
+    const auto source = g_nowPlaying;
+    std::thread([request, source, replace] {
+        try {
+            auto router = etherbeat::make_default_router();
+            auto output = libraryRoot() / L"control" / source.stem();
+            std::error_code ec;
+            fs::create_directories(output, ec);
+            const auto artifact = router.generate(request, output);
+            const auto analysis = etherbeat::analyze_audio_file(artifact.audio_path);
+            if (!analysis.ready) {
+                throw std::runtime_error(
+                    analysis.error.empty() ? "Control render completed but audio analysis failed" : analysis.error);
+            }
+            postWork(replace ? WorkKind::ControlReplace : WorkKind::ControlVariation,
+                     true, L"", artifact.audio_path, analysis, artifact.resolved_seed);
+        } catch (const std::exception& e) {
+            postWork(replace ? WorkKind::ControlReplace : WorkKind::ControlVariation,
+                     false, wide(e.what()), {}, {}, 0);
         }
     }).detach();
 }
@@ -360,11 +460,13 @@ void startEngineCheck() {
     }).detach();
 }
 
-void drawButton(Graphics& g, const RectF& r, const std::wstring& label, int action, bool accent = false) {
+void drawButton(Graphics& g, const RectF& r, const std::wstring& label, int action,
+                bool accent = false) {
     roundRect(g, r, 17.f,
               accent ? Color(255, 34, 29, 10) : Color(246, 15, 15, 16),
               accent ? amber(190) : Color(90, 94, 87, 70), 1.f);
-    drawText(g, label, r, 11.f, accent ? amber() : warm(), FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+    drawText(g, label, r, 11.f, accent ? amber() : warm(), FontStyleBold,
+             StringAlignmentCenter, StringAlignmentCenter);
     addHit(r, action);
 }
 
@@ -383,18 +485,20 @@ void drawNav(Graphics& g, float width) {
         const RectF r = R(x, 73.f, w, 30.f);
         const bool selected = g_screen == tab.screen;
         if (selected) roundRect(g, r, 14.f, Color(255, 31, 27, 10), amber(185), 1.f);
-        drawText(g, tab.label, r, 11.f, selected ? amber() : muted(), selected ? FontStyleBold : FontStyleRegular,
+        drawText(g, tab.label, r, 11.f, selected ? amber() : muted(),
+                 selected ? FontStyleBold : FontStyleRegular,
                  StringAlignmentCenter, StringAlignmentCenter);
         addHit(r, tab.action);
         x += w + 7.f;
     }
-    drawText(g, L"ETHERPLAY DNA // ETHERBEAT V0.2", R(width - 330.f, 78.f, 295.f, 20.f), 10.f, muted(), FontStyleBold,
-             StringAlignmentFar);
+    drawText(g, L"ETHERPLAY DNA // ETHERBEAT V0.2", R(width - 330.f, 78.f, 295.f, 20.f),
+             10.f, muted(), FontStyleBold, StringAlignmentFar);
 }
 
 void drawAnalyzer(Graphics& g, const RectF& area, const etherbeat::AudioAnalysis& analysis) {
     roundRect(g, area, 22.f, panel(), Color(95, 91, 84, 67));
-    drawText(g, L"ETHERTECH // FREQUENCY ANALYZER", R(area.X + 20.f, area.Y + 18.f, area.Width - 40.f, 24.f),
+    drawText(g, L"ETHERTECH // FREQUENCY ANALYZER",
+             R(area.X + 20.f, area.Y + 18.f, area.Width - 40.f, 24.f),
              11.f, amber(), FontStyleBold);
 
     const float gx = area.X + 20.f;
@@ -413,21 +517,24 @@ void drawAnalyzer(Graphics& g, const RectF& area, const etherbeat::AudioAnalysis
         const float value = analysis.ready ? analysis.spectrum[static_cast<std::size_t>(i)] : .025f;
         const float h = std::max(2.f, value * gh);
         const float x = gx + static_cast<float>(i) * (bw + gap);
-        LinearGradientBrush fill(PointF(x, gy + gh), PointF(x, gy + gh - h), violet(170), pink(205));
+        LinearGradientBrush fill(PointF(x, gy + gh), PointF(x, gy + gh - h),
+                                 violet(170), pink(205));
         g.FillRectangle(&fill, x, gy + gh - h, std::max(1.f, bw), h);
     }
     std::wstring stats = analysis.ready
-        ? L"BASS " + std::to_wstring(static_cast<int>(analysis.bass * 100.f)) + L"%   MID " +
-          std::to_wstring(static_cast<int>(analysis.mid * 100.f)) + L"%   AIR " +
-          std::to_wstring(static_cast<int>(analysis.treble * 100.f)) + L"%   BEAT " +
-          std::to_wstring(static_cast<int>(analysis.beat_peak * 100.f)) + L"%"
+        ? L"BASS " + std::to_wstring(static_cast<int>(analysis.bass * 100.f)) +
+          L"%   MID " + std::to_wstring(static_cast<int>(analysis.mid * 100.f)) +
+          L"%   AIR " + std::to_wstring(static_cast<int>(analysis.treble * 100.f)) +
+          L"%   BEAT " + std::to_wstring(static_cast<int>(analysis.beat_peak * 100.f)) + L"%"
         : L"NO AUDIO CAPTURED";
-    drawText(g, stats, R(area.X + 20.f, area.GetBottom() - 62.f, area.Width - 40.f, 22.f), 10.f,
-             analysis.ready ? warm() : muted(), FontStyleBold);
+    drawText(g, stats, R(area.X + 20.f, area.GetBottom() - 62.f, area.Width - 40.f, 22.f),
+             10.f, analysis.ready ? warm() : muted(), FontStyleBold);
     if (analysis.ready) {
         std::wostringstream meta;
-        meta << analysis.sample_rate << L" Hz // " << std::fixed << std::setprecision(1) << analysis.duration_seconds << L" sec";
-        drawText(g, meta.str(), R(area.X + 20.f, area.GetBottom() - 38.f, area.Width - 40.f, 20.f), 9.f, muted());
+        meta << analysis.sample_rate << L" Hz // " << std::fixed << std::setprecision(1)
+             << analysis.duration_seconds << L" sec";
+        drawText(g, meta.str(), R(area.X + 20.f, area.GetBottom() - 38.f,
+                                  area.Width - 40.f, 20.f), 9.f, muted());
     }
 }
 
@@ -441,30 +548,38 @@ void drawHome(Graphics& g, float W, float H) {
     roundRect(g, left, 24.f, panel(), Color(85, 98, 89, 70));
     roundRect(g, right, 24.f, panel(), Color(85, 98, 89, 70));
 
-    drawText(g, L"FOUNDATION", R(left.X + 22.f, left.Y + 22.f, left.Width - 44.f, 22.f), 11.f, amber(), FontStyleBold);
-    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(left.X + 22.f, left.Y + 60.f, left.Width - 44.f, 34.f), 19.f, warm(), FontStyleBold);
+    drawText(g, L"FOUNDATION", R(left.X + 22.f, left.Y + 22.f, left.Width - 44.f, 22.f),
+             11.f, amber(), FontStyleBold);
+    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(left.X + 22.f, left.Y + 60.f,
+             left.Width - 44.f, 34.f), 19.f, warm(), FontStyleBold);
     drawText(g, L"It should generate before any Pleiadian training exists. Training later teaches your private taste and sound lineage — it is not required for basic generation.",
              R(left.X + 22.f, left.Y + 106.f, left.Width - 44.f, 84.f), 12.f, muted());
-    drawButton(g, R(left.X + 22.f, left.GetBottom() - 62.f, 150.f, 40.f), L"CREATE BEAT", ActTabCreate, true);
+    drawButton(g, R(left.X + 22.f, left.GetBottom() - 62.f, 150.f, 40.f),
+               L"CREATE BEAT", ActTabCreate, true);
 
     const bool installed = etherbeat::managed_ace_step_runtime_installed();
     const bool ready = etherbeat::managed_ace_step_engine_ready();
-    drawText(g, L"ENGINE STATE", R(right.X + 22.f, right.Y + 22.f, right.Width - 44.f, 22.f), 11.f, amber(), FontStyleBold);
+    drawText(g, L"ENGINE STATE", R(right.X + 22.f, right.Y + 22.f, right.Width - 44.f, 22.f),
+             11.f, amber(), FontStyleBold);
     drawText(g, ready ? L"ONLINE" : (installed ? L"INSTALLED / SLEEPING" : L"NOT PROVISIONED YET"),
-             R(right.X + 22.f, right.Y + 60.f, right.Width - 44.f, 34.f), 18.f, ready ? Color(255, 176, 228, 156) : warm(), FontStyleBold);
+             R(right.X + 22.f, right.Y + 60.f, right.Width - 44.f, 34.f), 18.f,
+             ready ? Color(255, 176, 228, 156) : warm(), FontStyleBold);
     drawText(g, installed
         ? L"The runtime exists locally. EtherBeat will wake it invisibly when Generate needs it."
         : L"First Generate will provision the official portable runtime automatically. This can be a large one-time download.",
         R(right.X + 22.f, right.Y + 106.f, right.Width - 44.f, 70.f), 12.f, muted());
-    drawButton(g, R(right.X + 22.f, right.GetBottom() - 62.f, 150.f, 40.f), L"ENGINE CHECK", ActStartEngine, true);
+    drawButton(g, R(right.X + 22.f, right.GetBottom() - 62.f, 150.f, 40.f),
+               L"ENGINE CHECK", ActStartEngine, true);
 }
 
 void drawCreate(Graphics& g, float W, float H) {
     drawText(g, L"CREATE", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"text → 4 drafts → EtherDNA → critic ranking → promoted winner", R(44.f, 166.f, 650.f, 24.f), 11.f, muted());
+    drawText(g, L"text → 4 drafts → EtherDNA → critic ranking → promoted winner",
+             R(44.f, 166.f, 650.f, 24.f), 11.f, muted());
 
     roundRect(g, R(42.f, 208.f, W - 84.f, H - 278.f), 24.f, panel(), Color(85, 98, 89, 70));
-    drawText(g, L"SYNESTHESIA / PRODUCTION LANGUAGE", R(66.f, 226.f, 430.f, 22.f), 10.f, amber(), FontStyleBold);
+    drawText(g, L"SYNESTHESIA / PRODUCTION LANGUAGE", R(66.f, 226.f, 430.f, 22.f),
+             10.f, amber(), FontStyleBold);
     drawText(g, L"BPM", R(66.f, 492.f, 90.f, 18.f), 10.f, muted(), FontStyleBold);
     drawText(g, L"KEY", R(190.f, 492.f, 90.f, 18.f), 10.f, muted(), FontStyleBold);
     drawText(g, L"DURATION", R(314.f, 492.f, 100.f, 18.f), 10.f, muted(), FontStyleBold);
@@ -476,14 +591,16 @@ void drawCreate(Graphics& g, float W, float H) {
     drawText(g, ready ? L"ACE 1.5 ONLINE" : (installed ? L"ACE 1.5 LOCAL" : L"FIRST RUN SETUP"),
              R(W - 345.f, 514.f, 210.f, 26.f), 12.f, ready ? amber() : warm(), FontStyleBold);
 
-    drawButton(g, R(66.f, H - 128.f, 210.f, 52.f), g_working ? L"SEARCHING..." : L"SEARCH x4", ActGenerate, true);
+    drawButton(g, R(66.f, H - 128.f, 210.f, 52.f),
+               g_working ? L"SEARCHING..." : L"SEARCH x4", ActGenerate, true);
     drawText(g, L"EtherSearch keeps all candidates locally and promotes the highest measured match",
              R(296.f, H - 118.f, W - 370.f, 34.f), 10.f, muted());
 }
 
 void drawLibrary(Graphics& g, float W, float H) {
     drawText(g, L"LIBRARY", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"private local generations", R(44.f, 166.f, 320.f, 22.f), 11.f, muted());
+    drawText(g, L"private local generations + control versions", R(44.f, 166.f, 390.f, 22.f),
+             11.f, muted());
     drawButton(g, R(W - 200.f, 132.f, 150.f, 38.f), L"OPEN FOLDER", ActOpenLibrary);
 
     const float x = 42.f;
@@ -491,7 +608,8 @@ void drawLibrary(Graphics& g, float W, float H) {
     const float w = W - 84.f;
     if (g_library.empty()) {
         roundRect(g, R(x, y0, w, 140.f), 22.f, panel(), Color(80, 92, 84, 68));
-        drawText(g, L"NO GENERATIONS YET", R(x + 22.f, y0 + 28.f, w - 44.f, 28.f), 15.f, warm(), FontStyleBold);
+        drawText(g, L"NO GENERATIONS YET", R(x + 22.f, y0 + 28.f, w - 44.f, 28.f),
+                 15.f, warm(), FontStyleBold);
         drawText(g, L"If Generate has never produced a file, check the ENGINE tab. The pretrained model should work before custom training.",
                  R(x + 22.f, y0 + 66.f, w - 44.f, 52.f), 11.f, muted());
         return;
@@ -502,9 +620,12 @@ void drawLibrary(Graphics& g, float W, float H) {
         const float y = y0 + static_cast<float>(i) * 58.f;
         RectF row = R(x, y, w, 48.f);
         roundRect(g, row, 15.f, Color(242, 10, 10, 11), Color(65, 88, 82, 68));
-        drawText(g, g_library[i].filename().wstring(), R(x + 18.f, y + 7.f, w - 170.f, 22.f), 11.f, warm(), FontStyleBold);
-        drawText(g, L"click to load into now playing", R(x + 18.f, y + 27.f, w - 170.f, 16.f), 9.f, muted());
-        drawText(g, L"LOAD", R(x + w - 100.f, y + 12.f, 72.f, 22.f), 10.f, amber(), FontStyleBold, StringAlignmentFar);
+        drawText(g, g_library[i].filename().wstring(), R(x + 18.f, y + 7.f, w - 170.f, 22.f),
+                 11.f, warm(), FontStyleBold);
+        drawText(g, L"click to load into now playing", R(x + 18.f, y + 27.f, w - 170.f, 16.f),
+                 9.f, muted());
+        drawText(g, L"LOAD", R(x + w - 100.f, y + 12.f, 72.f, 22.f), 10.f,
+                 amber(), FontStyleBold, StringAlignmentFar);
         addHit(row, ActLibraryBase + static_cast<int>(i));
     }
 }
@@ -517,47 +638,93 @@ void drawNowPlaying(Graphics& g, float W, float H) {
         return;
     }
 
-    drawText(g, g_nowPlaying.filename().wstring(), R(44.f, 170.f, W - 88.f, 28.f), 14.f, amber(), FontStyleBold);
-    drawAnalyzer(g, R(42.f, 220.f, W - 84.f, H - 350.f), g_analysis);
+    drawText(g, g_nowPlaying.filename().wstring(), R(44.f, 170.f, W - 88.f, 28.f),
+             14.f, amber(), FontStyleBold);
+
+    const float contentW = W - 84.f;
+    const float gap = 18.f;
+    const float analyzerW = contentW * .58f;
+    const RectF analyzer = R(42.f, 220.f, analyzerW, H - 350.f);
+    const RectF control = R(analyzer.GetRight() + gap, 220.f,
+                            contentW - analyzerW - gap, H - 350.f);
+
+    drawAnalyzer(g, analyzer, g_nowAnalysis);
+    roundRect(g, control, 22.f, panel(), Color(104, 108, 87, 58));
+    drawText(g, L"ETHERCONTROL // LIVE", R(control.X + 20.f, control.Y + 18.f,
+             control.Width - 40.f, 22.f), 11.f, amber(), FontStyleBold);
+    drawText(g, L"producer instruction", R(control.X + 20.f, control.Y + 48.f,
+             control.Width - 40.f, 18.f), 9.f, muted(), FontStyleBold);
+    drawText(g, L"REFERENCE STRENGTH", R(control.X + 20.f, control.Y + 190.f,
+             control.Width - 40.f, 18.f), 9.f, muted(), FontStyleBold);
+    drawText(g, L"0 = mutate hard   //   1 = preserve hard", R(control.X + 152.f,
+             control.Y + 190.f, control.Width - 172.f, 18.f), 8.f, muted());
+    drawText(g, L"REPAINT WINDOW", R(control.X + 20.f, control.Y + 248.f,
+             control.Width - 40.f, 18.f), 9.f, muted(), FontStyleBold);
+    drawText(g, L"START", R(control.X + 20.f, control.Y + 270.f, 80.f, 16.f),
+             8.f, muted(), FontStyleBold);
+    drawText(g, L"END", R(control.X + 132.f, control.Y + 270.f, 80.f, 16.f),
+             8.f, muted(), FontStyleBold);
+
+    const float buttonY = control.GetBottom() - 56.f;
+    const float buttonW = (control.Width - 52.f) * .5f;
+    drawButton(g, R(control.X + 18.f, buttonY, buttonW, 40.f),
+               g_working ? L"WORKING..." : L"VARIATION", ActVariation, true);
+    drawButton(g, R(control.X + 34.f + buttonW, buttonY, buttonW, 40.f),
+               g_working ? L"WORKING..." : L"REPLACE SECTION", ActReplaceSection);
+
     drawButton(g, R(42.f, H - 104.f, 120.f, 42.f), L"PLAY", ActPlay, true);
     drawButton(g, R(174.f, H - 104.f, 120.f, 42.f), L"STOP", ActStop);
     drawButton(g, R(306.f, H - 104.f, 150.f, 42.f), L"OPEN LIBRARY", ActOpenLibrary);
+    drawText(g, L"Original stays local. Every control render becomes a new version.",
+             R(480.f, H - 94.f, W - 520.f, 26.f), 9.f, muted());
 }
 
 void drawSongLab(Graphics& g, float W, float H) {
     drawText(g, L"SONG LAB", R(42.f, 126.f, 300.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"reference audio → EtherPlay FFT → measurable sound DNA", R(44.f, 166.f, 560.f, 22.f), 11.f, muted());
+    drawText(g, L"reference audio → EtherPlay FFT → measurable sound DNA",
+             R(44.f, 166.f, 560.f, 22.f), 11.f, muted());
     drawButton(g, R(W - 224.f, 132.f, 174.f, 38.f), L"CHOOSE AUDIO", ActChooseReference, true);
 
     if (!g_reference.empty()) {
-        drawText(g, g_reference.filename().wstring(), R(44.f, 194.f, W - 88.f, 24.f), 11.f, amber(), FontStyleBold);
+        drawText(g, g_reference.filename().wstring(), R(44.f, 194.f, W - 88.f, 24.f),
+                 11.f, amber(), FontStyleBold);
     }
-    drawAnalyzer(g, R(42.f, 230.f, W - 84.f, H - 304.f), g_reference.empty() ? etherbeat::AudioAnalysis{} : g_analysis);
+    drawAnalyzer(g, R(42.f, 230.f, W - 84.f, H - 304.f),
+                 g_reference.empty() ? etherbeat::AudioAnalysis{} : g_referenceAnalysis);
 }
 
 void drawEngine(Graphics& g, float W, float H) {
     const bool installed = etherbeat::managed_ace_step_runtime_installed();
     const bool ready = etherbeat::managed_ace_step_engine_ready();
     drawText(g, L"ENGINE", R(42.f, 126.f, 260.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"model health + local runtime diagnostics", R(44.f, 166.f, 430.f, 22.f), 11.f, muted());
+    drawText(g, L"model health + local runtime diagnostics", R(44.f, 166.f, 430.f, 22.f),
+             11.f, muted());
 
     RectF card = R(42.f, 216.f, W - 84.f, H - 286.f);
     roundRect(g, card, 24.f, panel(), Color(88, 98, 89, 70));
-    drawText(g, L"FOUNDATION MODEL", R(card.X + 24.f, card.Y + 24.f, 260.f, 20.f), 10.f, amber(), FontStyleBold);
-    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(card.X + 24.f, card.Y + 54.f, 430.f, 32.f), 19.f, warm(), FontStyleBold);
-    drawText(g, L"PLEIADIAN ADAPTER", R(card.X + 24.f, card.Y + 112.f, 260.f, 20.f), 10.f, amber(), FontStyleBold);
-    drawText(g, L"NOT TRAINED YET", R(card.X + 24.f, card.Y + 142.f, 320.f, 28.f), 16.f, muted(), FontStyleBold);
-    drawText(g, L"That only means EtherBeat has not learned your private sound yet. It does NOT explain a total failure to generate. Base text-to-music should already work.",
-             R(card.X + 24.f, card.Y + 182.f, card.Width * .54f, 74.f), 11.f, muted());
+    drawText(g, L"FOUNDATION MODEL", R(card.X + 24.f, card.Y + 24.f, 260.f, 20.f),
+             10.f, amber(), FontStyleBold);
+    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(card.X + 24.f, card.Y + 54.f, 430.f, 32.f),
+             19.f, warm(), FontStyleBold);
+    drawText(g, L"LIVE CONTROL", R(card.X + 24.f, card.Y + 112.f, 260.f, 20.f),
+             10.f, amber(), FontStyleBold);
+    drawText(g, L"COVER + REPAINT READY", R(card.X + 24.f, card.Y + 142.f, 360.f, 28.f),
+             16.f, warm(), FontStyleBold);
+    drawText(g, L"Variation and Replace Section now route through ACE source-audio control. Component locks, symbolic chords and isolated drum/melody conditioning remain gated until a provider can truly honor them.",
+             R(card.X + 24.f, card.Y + 182.f, card.Width * .54f, 86.f), 11.f, muted());
 
     const float sx = card.X + card.Width * .62f;
     drawText(g, L"RUNTIME", R(sx, card.Y + 24.f, 160.f, 20.f), 10.f, amber(), FontStyleBold);
-    drawText(g, installed ? L"INSTALLED" : L"MISSING", R(sx, card.Y + 54.f, 220.f, 30.f), 17.f, installed ? warm() : Color(255, 235, 130, 120), FontStyleBold);
+    drawText(g, installed ? L"INSTALLED" : L"MISSING", R(sx, card.Y + 54.f, 220.f, 30.f),
+             17.f, installed ? warm() : Color(255, 235, 130, 120), FontStyleBold);
     drawText(g, L"API", R(sx, card.Y + 112.f, 160.f, 20.f), 10.f, amber(), FontStyleBold);
-    drawText(g, ready ? L"ONLINE" : L"OFFLINE", R(sx, card.Y + 142.f, 220.f, 30.f), 17.f, ready ? Color(255, 176, 228, 156) : muted(), FontStyleBold);
+    drawText(g, ready ? L"ONLINE" : L"OFFLINE", R(sx, card.Y + 142.f, 220.f, 30.f),
+             17.f, ready ? Color(255, 176, 228, 156) : muted(), FontStyleBold);
 
-    drawButton(g, R(card.X + 24.f, card.GetBottom() - 62.f, 170.f, 40.f), L"START / CHECK", ActStartEngine, true);
-    drawButton(g, R(card.X + 208.f, card.GetBottom() - 62.f, 170.f, 40.f), L"OPEN RUNTIME", ActOpenRuntime);
+    drawButton(g, R(card.X + 24.f, card.GetBottom() - 62.f, 170.f, 40.f),
+               L"START / CHECK", ActStartEngine, true);
+    drawButton(g, R(card.X + 208.f, card.GetBottom() - 62.f, 170.f, 40.f),
+               L"OPEN RUNTIME", ActOpenRuntime);
 }
 
 void paint(HWND hwnd) {
@@ -572,11 +739,13 @@ void paint(HWND hwnd) {
     const float H = static_cast<float>(client.bottom - client.top);
 
     g_hits.clear();
-    LinearGradientBrush bg(PointF(0.f, 0.f), PointF(W, H), Color(255, 3, 3, 4), Color(255, 13, 11, 8));
+    LinearGradientBrush bg(PointF(0.f, 0.f), PointF(W, H),
+                           Color(255, 3, 3, 4), Color(255, 13, 11, 8));
     g.FillRectangle(&bg, 0.f, 0.f, W, H);
 
     drawText(g, L"ETHERBEAT", R(34.f, 22.f, 300.f, 34.f), 25.f, warm(), FontStyleBold);
-    drawText(g, L"ALIEN WORKSHOP // LOCAL", R(36.f, 52.f, 280.f, 18.f), 9.f, muted(), FontStyleBold);
+    drawText(g, L"ALIEN WORKSHOP // LOCAL", R(36.f, 52.f, 280.f, 18.f),
+             9.f, muted(), FontStyleBold);
     drawNav(g, W);
 
     switch (g_screen) {
@@ -597,11 +766,21 @@ void layoutEdits() {
     RECT r{};
     GetClientRect(g_window, &r);
     const int W = r.right - r.left;
+
     MoveWindow(g_prompt, 66, 256, std::max(420, W - 132), 210, TRUE);
     MoveWindow(g_bpm, 66, 516, 106, 32, TRUE);
     MoveWindow(g_key, 190, 516, 106, 32, TRUE);
     MoveWindow(g_duration, 314, 516, 106, 32, TRUE);
     MoveWindow(g_seed, 438, 516, 138, 32, TRUE);
+
+    const int contentW = W - 84;
+    const int analyzerW = static_cast<int>(static_cast<double>(contentW) * .58);
+    const int controlX = 42 + analyzerW + 18;
+    const int controlW = std::max(310, contentW - analyzerW - 18);
+    MoveWindow(g_controlPrompt, controlX + 20, 292, controlW - 40, 104, TRUE);
+    MoveWindow(g_controlStrength, controlX + 20, 432, 116, 30, TRUE);
+    MoveWindow(g_controlStart, controlX + 20, 510, 96, 30, TRUE);
+    MoveWindow(g_controlEnd, controlX + 132, 510, 96, 30, TRUE);
 }
 
 HWND makeEdit(HWND parent, int id, const wchar_t* initial, DWORD extra = 0) {
@@ -609,7 +788,8 @@ HWND makeEdit(HWND parent, int id, const wchar_t* initial, DWORD extra = 0) {
         WS_CHILD | WS_TABSTOP | ES_LEFT | extra,
         0, 0, 10, 10, parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_instance, nullptr);
-    SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(extra & ES_MULTILINE ? g_promptFont : g_uiFont), TRUE);
+    SendMessageW(h, WM_SETFONT,
+                 reinterpret_cast<WPARAM>(extra & ES_MULTILINE ? g_promptFont : g_uiFont), TRUE);
     return h;
 }
 
@@ -621,8 +801,17 @@ void createControls(HWND hwnd) {
     g_key = makeEdit(hwnd, ID_KEY, L"F# minor");
     g_duration = makeEdit(hwnd, ID_DURATION, L"20");
     g_seed = makeEdit(hwnd, ID_SEED, L"random");
+
+    g_controlPrompt = makeEdit(hwnd, ID_CONTROL_PROMPT,
+        L"make this version colder, stranger and more degraded while preserving the musical identity",
+        ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_WANTRETURN);
+    g_controlStrength = makeEdit(hwnd, ID_CONTROL_STRENGTH, L"0.80");
+    g_controlStart = makeEdit(hwnd, ID_CONTROL_START, L"0.00");
+    g_controlEnd = makeEdit(hwnd, ID_CONTROL_END, L"8.00");
+
     layoutEdits();
     showCreateControls(false);
+    showControlControls(false);
 }
 
 void handleAction(int action) {
@@ -630,7 +819,8 @@ void handleAction(int action) {
         const std::size_t index = static_cast<std::size_t>(action - ActLibraryBase);
         if (index < g_library.size()) {
             g_nowPlaying = g_library[index];
-            g_analysis = etherbeat::analyze_audio_file(g_nowPlaying);
+            g_nowAnalysis = etherbeat::analyze_audio_file(g_nowPlaying);
+            syncControlWindowToTrack();
             setScreen(Screen::NowPlaying);
         }
         return;
@@ -644,6 +834,8 @@ void handleAction(int action) {
     case ActTabSongLab: setScreen(Screen::SongLab); break;
     case ActTabEngine: setScreen(Screen::Engine); break;
     case ActGenerate: startGenerate(); break;
+    case ActVariation: startControl(etherbeat::ControlUiAction::Variation); break;
+    case ActReplaceSection: startControl(etherbeat::ControlUiAction::ReplaceSection); break;
     case ActChooseReference: {
         const auto chosen = chooseAudio(g_window);
         if (!chosen.empty()) {
@@ -725,21 +917,35 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         if (!success) {
             setStatus(L"FAILED // " + error);
-            if (kind == WorkKind::Generate || kind == WorkKind::EngineCheck) setScreen(Screen::Engine);
+            if (kind == WorkKind::Generate || kind == WorkKind::EngineCheck) {
+                setScreen(Screen::Engine);
+            } else if (kind == WorkKind::ControlVariation || kind == WorkKind::ControlReplace) {
+                setScreen(Screen::NowPlaying);
+            }
             MessageBoxW(hwnd, error.c_str(), L"ETHERBEAT ENGINE", MB_OK | MB_ICONERROR);
             return 0;
         }
 
         if (kind == WorkKind::Generate) {
             g_nowPlaying = artifact;
-            g_analysis = analysis;
+            g_nowAnalysis = analysis;
             SetWindowTextW(g_seed, std::to_wstring(seed).c_str());
+            syncControlWindowToTrack();
             refreshLibrary();
             setStatus(L"ETHERSEARCH WINNER // " + artifact.filename().wstring());
             setScreen(Screen::NowPlaying);
             playPath(g_nowPlaying);
+        } else if (kind == WorkKind::ControlVariation || kind == WorkKind::ControlReplace) {
+            g_nowPlaying = artifact;
+            g_nowAnalysis = analysis;
+            syncControlWindowToTrack();
+            refreshLibrary();
+            setStatus((kind == WorkKind::ControlReplace ? L"REPAINT VERSION // " : L"VARIATION VERSION // ")
+                      + artifact.filename().wstring());
+            setScreen(Screen::NowPlaying);
+            playPath(g_nowPlaying);
         } else if (kind == WorkKind::AnalyzeReference) {
-            g_analysis = analysis;
+            g_referenceAnalysis = analysis;
             setStatus(L"SONG LAB // REFERENCE HEARD");
             setScreen(Screen::SongLab);
         } else if (kind == WorkKind::EngineCheck) {
@@ -773,9 +979,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (GdiplusStartup(&g_gdiplus, &input, nullptr) != Ok) return 1;
 
     g_uiFont = CreateFontW(-16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                           DEFAULT_PITCH, L"Segoe UI");
     g_promptFont = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
-                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                               DEFAULT_PITCH, L"Segoe UI");
     g_editBrush = CreateSolidBrush(RGB(12, 12, 13));
 
     WNDCLASSEXW wc{};

@@ -1,12 +1,10 @@
 #include "etherbeat/EtherSections.hpp"
 
-// V0.2P is additive: reuse the proven V0.2O timeline shell and wrap only the
-// window procedure/main entry point with section-map visualization + snapping.
-#define timelineWindowProc etherbeat_timeline_legacy_proc
-#define wWinMain etherbeat_timeline_legacy_main
+// V0.2P is additive: embed the proven V0.2O timeline shell without its entry
+// point, then wrap timelineWindowProc with section-map visualization + snapping.
+#define ETHERBEAT_TIMELINE_EMBEDDED
 #include "EtherBeatTabbedWinTimeline.cpp"
-#undef wWinMain
-#undef timelineWindowProc
+#undef ETHERBEAT_TIMELINE_EMBEDDED
 
 namespace {
 
@@ -127,7 +125,6 @@ void drawSectionsOverlay(HWND hwnd) {
              g_sectionSnap ? amber() : muted(), FontStyleBold,
              StringAlignmentCenter, StringAlignmentCenter);
 
-    // Draw structural boundaries over the real waveform without obscuring it.
     const RectF track = timelineTrackRect(hwnd);
     const double duration = std::max(0.001, g_sectionMap->duration_seconds);
     Pen boundary(Color(125, 242, 195, 61), 1.f);
@@ -176,7 +173,7 @@ LRESULT CALLBACK sectionsWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         const int y = GET_Y_LPARAM(lParam);
         if (!g_timelineDragging && handleSectionClick(hwnd, x, y)) return 0;
         const bool wasTimelineDrag = g_timelineDragging;
-        const LRESULT result = etherbeat_timeline_legacy_proc(hwnd, msg, wParam, lParam);
+        const LRESULT result = timelineWindowProc(hwnd, msg, wParam, lParam);
         if (wasTimelineDrag && g_sectionSnap) {
             snapCurrentTimelineSelection();
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -184,14 +181,14 @@ LRESULT CALLBACK sectionsWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return result;
     }
     case WM_PAINT: {
-        const LRESULT result = etherbeat_timeline_legacy_proc(hwnd, msg, wParam, lParam);
+        const LRESULT result = timelineWindowProc(hwnd, msg, wParam, lParam);
         drawSectionsOverlay(hwnd);
         return result;
     }
     default:
         break;
     }
-    return etherbeat_timeline_legacy_proc(hwnd, msg, wParam, lParam);
+    return timelineWindowProc(hwnd, msg, wParam, lParam);
 }
 
 } // namespace

@@ -78,7 +78,7 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     set_target_properties(EtherBeat PROPERTIES OUTPUT_NAME "ETHERBEAT")
 
     if(MSVC)
-        target_compile_options(EtherBeat PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(EtherBeat PRIVATE /W4 /permissive- /utf-8 /FIwindowsx.h)
     endif()
 endif()
 

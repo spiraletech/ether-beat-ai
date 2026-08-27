@@ -75,11 +75,19 @@ int main() {
     assert(result.slots.size() == 4u);
     assert(decode_calls == 1);
     assert(placeholder_calls == 1);
+    assert(result.adaptive_seams);
     assert(!result.slots[0].generated);
+    assert(!result.slots[0].seam_analyzed);
     assert(!result.slots[1].generated);
     assert(!result.slots[2].generated);
     assert(result.slots[3].generated);
-    assert(result.duration_seconds > 3.95 && result.duration_seconds < 3.99);
+    assert(result.slots[1].seam_analyzed);
+    assert(result.slots[2].seam_analyzed);
+    assert(result.slots[3].seam_analyzed);
+    assert(result.slots[1].applied_crossfade_seconds >= 0.0049);
+    assert(result.slots[3].applied_crossfade_seconds >= result.slots[1].applied_crossfade_seconds);
+    assert(result.max_seam_score >= result.average_seam_score);
+    assert(result.duration_seconds > 3.65 && result.duration_seconds < 4.0);
     assert(result.slots[1].output_start_seconds < 1.0);
     assert(std::abs(result.slots[3].output_end_seconds - result.duration_seconds) < 0.00001);
 
@@ -90,10 +98,13 @@ int main() {
 
     std::ifstream manifest(result.manifest_path);
     const std::string text(std::istreambuf_iterator<char>{manifest}, std::istreambuf_iterator<char>{});
-    assert(text.find("etherbeat.assemble.v1") != std::string::npos);
+    assert(text.find("etherbeat.assemble.v2") != std::string::npos);
     assert(text.find("\"arrangement_revision\": 7") != std::string::npos);
     assert(text.find("BRIDGE ALT") != std::string::npos);
     assert(text.find("\"generated\": true") != std::string::npos);
+    assert(text.find("\"adaptive_seams\": true") != std::string::npos);
+    assert(text.find("\"seam_score\"") != std::string::npos);
+    assert(text.find("\"applied_crossfade_seconds\"") != std::string::npos);
 
     bool unresolved_rejected = false;
     try {
@@ -116,6 +127,19 @@ int main() {
         });
     assert(generated_only.sample_rate == 44'100u);
     assert(generated_only.success());
+    assert(generated_only.max_seam_score == 0.0);
+
+    // Fixed-crossfade fallback remains available for deterministic comparisons.
+    auto fixed_plan = plan;
+    fixed_plan.slots.resize(2);
+    const auto fixed = assembler.render(
+        fixed_plan,
+        root / "fixed.wav",
+        [&](const fs::path&) { return source; },
+        {},
+        {.crossfade_seconds=0.012, .require_all_placeholders=true, .adaptive_seams=false});
+    assert(!fixed.adaptive_seams);
+    assert(std::abs(fixed.slots[1].applied_crossfade_seconds - 0.012) < 0.0001);
 
     fs::remove_all(root, ec);
     return 0;

@@ -1,9 +1,11 @@
 #include "etherbeat/GenerationTypes.hpp"
+#include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/ModelRouter.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 
 int main() {
@@ -18,7 +20,7 @@ int main() {
         request.bpm = 72.0;
         request.key = "F# minor";
 
-        etherbeat::ModelRouter router{etherbeat::make_default_backend()};
+        etherbeat::ModelRouter router{std::make_unique<etherbeat::MockWaveBackend>()};
         const auto artifact = router.generate(request, output);
 
         if (!std::filesystem::exists(artifact.audio_path)) {

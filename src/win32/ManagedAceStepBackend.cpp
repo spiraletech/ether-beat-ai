@@ -2,6 +2,7 @@
 
 #include "etherbeat/AceStepApiBackend.hpp"
 #include "etherbeat/AceStepEngineManager.hpp"
+#include "etherbeat/AceStepRequestCodec.hpp"
 
 #include <windows.h>
 
@@ -21,7 +22,7 @@ void pump_windows_messages(bool& quitSeen) {
             quitSeen = true;
             continue;
         }
-        TranslateMessage(&message);
+        TranslateMessageW(&message);
         DispatchMessageW(&message);
     }
 }
@@ -32,13 +33,14 @@ public:
         return "ace-step-1.5-managed-local";
     }
 
+    [[nodiscard]] ProviderCapabilities capabilities() const noexcept override {
+        return ace_step_provider_capabilities();
+    }
+
     GenerationArtifact generate(
         const GenerationRequest& request,
         const std::filesystem::path& output_directory) override {
 
-        // The public backend contract remains synchronous, but the expensive local
-        // runtime/model work is moved to a worker so the Win32 UI can continue
-        // painting, moving, and responding instead of becoming Not Responding.
         auto task = std::async(std::launch::async, [request, output_directory] {
             ensure_managed_ace_step_engine();
             AceStepApiBackend delegate;

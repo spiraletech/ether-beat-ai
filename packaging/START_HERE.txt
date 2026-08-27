@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2I
+ETHERBEAT // ALIEN WORKSHOP V0.2J
 
 UI ANCHOR
 ---------
@@ -6,98 +6,69 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-The V0.2 UI remains the product chassis. V0.2I expands the engine contract underneath it; it does not add fake controls for providers that cannot execute them.
+The V0.2 UI remains the product chassis. V0.2J activates the first real producer-control provider underneath it without redesigning the shell.
 
-NEW IN V0.2I // ETHERCONTROL V0.1
---------------------------------
-EtherBeat now has a provider-agnostic precision editing contract for producer-style generation jobs.
+NEW IN V0.2J // LIVE ACE CONTROL PROVIDER
+-----------------------------------------
+EtherControl is no longer architecture-only.
+The managed local ACE-Step 1.5 provider now advertises the control jobs it can actually execute and translates EtherBeat control requests into ACE's current source-audio task API.
 
-Supported control modes in the core contract:
+LIVE TASK MAPPING
+-----------------
+EtherBeat mode            ACE provider task
+------------------------- -----------------
+TextToInstrumental        text2music
+Variation                 cover
+Audio-to-Audio            cover
+Replace Section           repaint
+Extend                    BLOCKED
+
+Variation / Audio-to-Audio send source audio plus EtherBeat reference strength as ACE audio_cover_strength.
+Replace Section sends source audio plus the validated repainting_start / repainting_end temporal window.
+
+The output lineage records the provider task, EtherBeat mode, render intent, seed, reference strength and edit-window values.
+
+STRICT CAPABILITY TRUTH
+-----------------------
+The managed ACE provider now advertises:
+- TextToInstrumental
 - Variation
-- Extend
-- Audio-to-Audio
-- Replace Section
-
-CONTROL DATA
-------------
-GenerationRequest can now carry explicit control semantics instead of hiding producer intent inside prompt prose:
-
-- reference audio
-- mutation amount
-- reference strength
-- temporal edit start/end window
-- component lock mask
-- optional drum conditioning reference
-- optional melody conditioning reference
-- optional chord progression
-
-Lockable musical components:
-- drums
-- bass
-- melody
-- harmony
-- texture
-- arrangement
-
-ETHERCONTROL COMPILER
----------------------
-EtherControl validates and normalizes control jobs before a renderer sees them.
-
-Rules include:
-- control jobs require reference audio
-- mutation amount must be 0..1
-- reference strength must be 0..1
-- temporal windows require both start and end
-- end must be later than start
-- Replace Section always requires an explicit temporal window
-- render intent is normalized to Control
-
-The compiler emits an idempotent control blueprint containing mode, reference strength, mutation amount, locked components, temporal boundaries and optional drum/melody/harmony conditioning.
-
-Locked components are compiled as preservation constraints, not casual style suggestions.
-
-CAPABILITY-GATED ROUTING
-------------------------
-Provider Router now understands additional precision capabilities:
-
+- AudioToAudio
+- ReferenceAudio
 - ReplaceSection
+- DraftRole
+- QualityRole
+- ControlRole
+- LocalRuntime
+- TemporalControl
+
+It deliberately does NOT advertise:
+- Extend
+- ComponentLocks
 - DrumConditioning
 - MelodyConditioning
 - HarmonyConditioning
-- ComponentLocks
-- TemporalControl
 
-A provider must advertise every capability required by the job.
-EtherBeat will not silently discard locks, edit windows, chord conditioning or reference controls just to make a request run.
+EtherBeat therefore refuses unsupported precision requests rather than silently dropping musical constraints.
 
-Example:
+ACE CONTROL CODEC
+-----------------
+A portable AceStepRequestCodec now owns provider translation.
+This keeps provider-specific JSON outside EtherControl and ModelRouter.
 
-  basic variation
-      -> basic Control provider can qualify
+The codec validates:
+- source audio exists logically for source-conditioned jobs
+- repaint windows have valid start/end ordering
+- unsupported component locks are rejected
+- unsupported isolated drum/melody references are rejected
+- unsupported symbolic chord conditioning is rejected
+- Extend remains rejected until continuation semantics are separately validated
 
-  replace 8-16 seconds
-  + lock drums/bass/melody/harmony/arrangement
-  + drum reference
-  + melody reference
-  + chord progression
-      -> only a precision Control provider advertising ALL requested features qualifies
-
-If no provider qualifies, routing fails explicitly with a human-readable capability error.
-
-CURRENT LIVE PROVIDER BOUNDARY
-------------------------------
-The current managed ACE-Step provider still advertises:
-
-  TextToInstrumental + Draft + Quality
-
-It does NOT currently advertise EtherBeat Control + ReferenceAudio precision capabilities.
-
-Therefore V0.2I deliberately does not expose a fake Replace Section / lock-components UI button yet.
-The Control engine contract is ready for a JASCO-style provider, another capable open model, or a future native Ether renderer without changing the existing EtherBeat UI architecture.
+This means future providers can implement the same EtherControl contract without copying ACE-specific fields into EtherBeat core.
 
 CURRENT CREATE PIPELINE
 -----------------------
-Normal CREATE remains fully operational:
+Normal CREATE remains unchanged:
 
   EtherBeat UI
       -> EtherComposer
@@ -112,24 +83,29 @@ Normal CREATE remains fully operational:
           -> final analysis / EtherDNA
       -> NOW PLAYING
 
-EtherControl is the parallel producer-editing path that future capable providers will activate.
+The live Control provider is now available to ModelRouter for source-audio producer jobs. Detailed Variation / Replace Section controls are not exposed as fake buttons in the V0.2J UI yet; the next UI phase can surface only the capabilities the active provider actually supports.
 
-TESTED ETHERCONTROL CONTRACT
+TESTED LIVE-CONTROL CONTRACT
 ----------------------------
-The dedicated precision-control smoke test verifies:
+A dedicated ACE control smoke test verifies without downloading model weights:
+- provider capability advertisement is truthful
+- TextToInstrumental maps to text2music
+- Variation maps to cover
+- Audio-to-Audio maps to cover
+- cover includes source audio, instruction and reference strength
+- Replace Section maps to repaint
+- repaint includes source audio and exact start/end window
+- Extend remains rejected
+- component locks remain rejected by ACE
+- symbolic chord conditioning remains rejected by ACE
+- existing Core/Search/AutoPromote/Control suites continue to pass
+- Windows/MSVC and Ubuntu/GCC compile and execute the same request-codec assertions
 
-- Replace Section compiles a structured Control request
-- five simultaneous component locks survive compilation
-- temporal window survives compilation
-- reference/mutation strengths survive compilation
-- chord progression survives compilation
-- control blueprint is idempotent and is not duplicated
-- precision request routes only to a fully capable provider
-- basic variation can still use a simpler Control provider
-- a weak provider cannot silently strip requested locks
-- invalid edit windows are rejected
-- existing Core/Search/AutoPromote suites continue to pass
-- Windows/MSVC and Ubuntu/GCC pass the same contract
+CI validates the native backend, provider routing, and exact request translation. It does not perform heavyweight model inference on GitHub runners because the managed ACE model/runtime weights are not installed there.
+
+MODEL / LICENSE NOTE
+--------------------
+JASCO-style control was studied as a possible specialized provider, but EtherBeat does not bundle JASCO model weights in this build. The current live control implementation reuses the managed ACE-Step foundation already inside EtherBeat.
 
 LOCAL DATA
 ----------
@@ -144,8 +120,9 @@ Quality promotion renders:
 
 CURRENT LIMITS
 --------------
-- No live precision Control provider is registered yet.
-- ACE-Step remains the current Draft + Quality renderer.
+- V0.2J does not yet expose Variation / Replace Section controls in the graphical UI.
+- Extend is intentionally blocked until continuation behavior is validated.
+- ACE does not advertise true component-lock, isolated drum/melody, or symbolic chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
 - EtherCritic remains DSP-derived; learned semantic/taste heads are later.
 - Pleiadian/user taste weighting is not trained yet.

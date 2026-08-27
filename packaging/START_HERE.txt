@@ -1,36 +1,37 @@
-ETHERBEAT // ALIEN WORKSHOP V0.1B
+ETHERBEAT // ALIEN WORKSHOP V0.1C
 
-WHAT IS REAL IN THIS BUILD
+ONE APP. NO SERVER BAT.
+-----------------------
+Run ETHERBEAT.exe.
+
+There is no SETUP_ACE_STEP.bat and no START_ACE_STEP.bat in this package.
+EtherBeat now owns the local model runtime itself.
+
+WHAT HAPPENS AUTOMATICALLY
 --------------------------
-1. REFERENCE analyzes WAV/MP3 locally with Windows Media Foundation + a native 1024-point Hann FFT.
-2. GENERATE now routes to ACE-Step 1.5 through a localhost-only Windows WinHTTP backend.
-3. Generated audio is downloaded back into EtherBeat's generated/ folder with .etherbeat.json lineage metadata.
+1. REFERENCE still analyzes WAV/MP3 locally with Windows Media Foundation + the native 1024-point Hann FFT.
+2. When GENERATE needs the AI engine, EtherBeat checks 127.0.0.1:8001 internally.
+3. If the model runtime is missing, EtherBeat downloads the official ACE-Step Windows portable runtime into:
+   %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
+4. EtherBeat extracts the runtime using Windows' built-in tar.exe.
+5. EtherBeat launches ACE-Step's embedded Python API invisibly with CREATE_NO_WINDOW.
+6. The engine is attached to an EtherBeat-owned Windows Job Object using KILL_ON_JOB_CLOSE.
+7. Close EtherBeat and its managed model-process tree is terminated automatically.
+8. Generated WAV files and .etherbeat.json lineage are saved in generated/ beside the app's working directory.
 
-FIRST-TIME MODEL SETUP
+FIRST REAL GENERATION
+---------------------
+1. Launch ETHERBEAT.exe.
+2. Enter your Synesthesia / Production Language prompt.
+3. Set BPM, key, duration, and optional seed.
+4. Press GENERATE.
+5. The first generation requires internet access and substantial disk space because the local runtime/model files must be acquired. Later launches reuse the private runtime automatically.
+6. Press OPEN OUTPUT after completion.
+
+IMPORTANT V0.1C LIMITS
 ----------------------
-1. Run SETUP_ACE_STEP.bat once.
-2. Expect a large local install. ACE-Step's core models are roughly 10 GB and model files may download on first launch.
-3. When setup finishes, run START_ACE_STEP.bat.
-4. Keep the ACE-Step console window open.
-5. Launch ETHERBEAT.exe.
-
-TEST REAL GENERATION
---------------------
-1. Enter a prompt in the Synesthesia / Production Language box.
-2. Set BPM, key, duration, and optionally a fixed seed.
-3. Press GENERATE.
-4. EtherBeat submits the job to http://127.0.0.1:8001, waits for completion, then saves the returned WAV into generated/.
-5. Press OPEN OUTPUT to inspect the artifact folder.
-
-IMPORTANT V0.1B LIMITS
-----------------------
-- Text-to-instrumental is the real model path in this build.
-- Reference audio is analyzed for musical DNA, but reference-conditioned generation / Extend / Variation are not yet fully mapped to ACE-Step cover/repaint modes.
-- Generation is synchronous in this build, so the window may appear busy while the local model is working. Background job/UI progress is the next UX pass.
+- Text-to-instrumental is the real ACE-Step model path.
+- Reference audio analysis is real; reference-conditioned generation / Extend / Variation still need their dedicated ACE-Step mappings.
+- The local model is large. A truly local Udio-class workflow cannot make multi-GB model weights disappear; V0.1C removes the MANUAL runtime/server ceremony instead.
+- Generation is still synchronous in this build. Background generation with live progress is the next UI/runtime pass.
 - No private corpus, vocals, LoRAs, checkpoints, or training data are included in this ZIP or public repository.
-
-MODEL RUNTIME
--------------
-EtherBeat expects the official ACE-Step 1.5 REST API at 127.0.0.1:8001.
-SETUP_ACE_STEP.bat installs the official repository into runtime\ACE-Step-1.5.
-START_ACE_STEP.bat launches its official start_api_server.bat.

@@ -234,6 +234,7 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 } // namespace
 
+#ifndef ETHERBEAT_ASSEMBLE_EMBEDDED
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     g_instance = instance;
     GdiplusStartupInput input;
@@ -276,3 +277,4 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     GdiplusShutdown(g_gdiplus);
     return static_cast<int>(message.wParam);
 }
+#endif

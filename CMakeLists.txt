@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.15
+    VERSION 0.2.16
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -24,6 +24,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherCompare.cpp
     src/core/EtherTimeline.cpp
     src/core/EtherSections.cpp
+    src/core/EtherArrangement.cpp
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
@@ -71,7 +72,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWinSections.cpp
+        src/win32/EtherBeatTabbedWinArrangement.cpp
         src/win32/AudioAnalysisWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -142,6 +143,10 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_sections_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_sections_smoke COMMAND etherbeat_sections_smoke)
 
+    add_executable(etherbeat_arrangement_smoke tests/ArrangementSmoke.cpp)
+    target_link_libraries(etherbeat_arrangement_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_arrangement_smoke COMMAND etherbeat_arrangement_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
@@ -153,6 +158,7 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_compare_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_timeline_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_sections_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_arrangement_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
@@ -164,5 +170,6 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_compare_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_timeline_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_sections_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_arrangement_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

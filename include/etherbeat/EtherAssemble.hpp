@@ -35,8 +35,16 @@ using AssemblyPlaceholderResolver = std::function<std::optional<PcmAudio>(
     double expected_duration_seconds)>;
 
 struct AssembleOptions {
+    // Used when adaptive_seams=false and retained as a deterministic fallback.
     double crossfade_seconds{0.020};
     bool require_all_placeholders{true};
+
+    // EtherSeam V0.1 adapts each boundary independently between these limits.
+    bool adaptive_seams{true};
+    double min_crossfade_seconds{0.005};
+    double max_crossfade_seconds{0.100};
+    double severe_seam_score{0.82};
+    bool reject_severe_seams{false};
 };
 
 struct AssembleSlotResult {
@@ -47,6 +55,17 @@ struct AssembleSlotResult {
     double input_duration_seconds{0.0};
     double output_start_seconds{0.0};
     double output_end_seconds{0.0};
+
+    // The first slot has no incoming seam and therefore leaves these at zero.
+    bool seam_analyzed{false};
+    double seam_score{0.0};
+    double rms_jump{0.0};
+    double spectral_jump{0.0};
+    double dc_jump{0.0};
+    double transient_collision{0.0};
+    double sample_jump{0.0};
+    double applied_crossfade_seconds{0.0};
+    bool severe_seam{false};
 };
 
 struct AssembleResult {
@@ -55,7 +74,14 @@ struct AssembleResult {
     std::uint32_t sample_rate{0};
     std::uint16_t channels{0};
     double duration_seconds{0.0};
+
+    // Legacy/fallback fixed crossfade requested by the caller.
     double crossfade_seconds{0.0};
+    bool adaptive_seams{false};
+    double average_seam_score{0.0};
+    double max_seam_score{0.0};
+    std::size_t severe_seam_count{0};
+
     std::vector<AssembleSlotResult> slots;
 
     [[nodiscard]] bool success() const noexcept {

@@ -1,3 +1,4 @@
+#include "etherbeat/EtherComposer.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/ModelRouter.hpp"
@@ -13,6 +14,25 @@ int main() {
     std::filesystem::remove_all(output);
 
     try {
+        etherbeat::GenerationRequest composerRequest;
+        composerRequest.prompt = "haunted cloud-rap instrumental, enormous negative space, submerged bass, beautifully degraded";
+        composerRequest.duration_seconds = 20.0;
+        composerRequest.bpm = 68.0;
+        composerRequest.key = "F# minor";
+
+        etherbeat::EtherComposer composer;
+        const auto plan = composer.compose(composerRequest);
+        if (plan.drum_density >= 0.48 || plan.vocal_space <= 0.70 || plan.bass_weight <= 0.65 || plan.texture_grit <= 0.65) {
+            std::cerr << "EtherComposer did not translate production language into expected controls\n";
+            return 1;
+        }
+        if (plan.sections.size() < 4 ||
+            plan.renderer_prompt.find("Composition blueprint") == std::string::npos ||
+            plan.renderer_prompt.find("Avoid festival-style EDM") == std::string::npos) {
+            std::cerr << "EtherComposer blueprint is incomplete\n";
+            return 1;
+        }
+
         etherbeat::GenerationRequest request;
         request.prompt = "etherbeat smoke test";
         request.duration_seconds = 0.05;
@@ -49,8 +69,9 @@ int main() {
         }
 
         if (text.find("etherbeat smoke test") == std::string::npos ||
+            text.find("Composition blueprint") == std::string::npos ||
             text.find("\"seed\": 1444") == std::string::npos) {
-            std::cerr << "Generation metadata is incomplete\n";
+            std::cerr << "Generation metadata is missing Composer lineage\n";
             return 1;
         }
 

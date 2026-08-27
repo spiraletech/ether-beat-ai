@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2M
+ETHERBEAT // ALIEN WORKSHOP V0.2N
 
 UI ANCHOR
 ---------
@@ -6,149 +6,132 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2M evolves NOW PLAYING instead of redesigning the product shell. The persistent EtherVersions graph introduced in V0.2L is now visible and driveable as a producer/version workspace.
+V0.2N evolves the V0.2M NOW PLAYING workspace instead of redesigning the product shell. EtherVersions remains the persistent branch graph; EtherCompare adds synchronized A/B audition plus measurable branch-difference readout.
 
-NEW IN V0.2M // ETHERVERSIONS WORKSPACE V0.1
--------------------------------------------
-NOW PLAYING keeps its split analyzer + EtherControl workspace and adds an EtherVersions rail directly beneath it.
+NEW IN V0.2N // ETHERCOMPARE V0.1
+--------------------------------
+NOW PLAYING keeps:
+- EtherPlay-derived analyzer
+- EtherControl Variation / Replace Section
+- EtherVersions PARENT / CHILD / HEAD / PROMOTE
 
-Visible version actions:
-- PARENT
-- < CHILD
-- CHILD >
-- HEAD
-- PROMOTE
+It adds:
+- A audition button
+- B audition button
+- A/B SYNCHRONIZED toggle
+- automatic B-target selection
+- EtherDNA similarity
+- low-end delta
+- brightness delta
+- rhythmic-activity delta
+- energy delta
 
-The rail also shows whether the current audio is the promoted HEAD or an unpromoted branch, its operation type, root identity prefix, and branch/child count.
+A / B MODEL
+-----------
+A is always the currently selected EtherVersions node shown in NOW PLAYING.
+Auditioning B does not change A, does not move HEAD, and does not rewrite lineage.
 
-PARENT
-------
-PARENT walks from the current control version to its immediate parent without deleting anything.
+B is selected deterministically from the most relevant alternate version:
+1. promoted HEAD when A is not HEAD
+2. next sibling when A already is HEAD and siblings exist
+3. direct child when A is a root with children
+4. parent as a fallback
 
-Example:
+This keeps comparison immediate without requiring a second file picker.
 
+SYNCHRONIZED AUDITION
+---------------------
+EtherBeat queries the current MCI playback position in milliseconds before switching A/B.
+The alternate audio is opened and seeks to the same timeline position before playback resumes.
+
+Typical flow:
+
+  A playing at 00:42.350
+      -> A/B SYNCHRONIZED
+  B opens
+      -> seek 00:42.350
+      -> play
+
+Switching back repeats the same process in the opposite direction.
+
+The selected EtherVersions node remains A while B is being auditioned.
+
+ETHERDNA DIFFERENCE VIEW
+------------------------
+EtherCompare V0.1 is a portable core module. It compares two persisted EtherDNA objects and reports measurable deltas.
+
+Current display includes:
+- DNA preservation similarity percentage
+- delta low-end weight
+- delta brightness
+- delta rhythmic activity
+- delta energy
+
+The core also computes:
+- bass delta
+- mid delta
+- treble delta
+- beat-peak delta
+- darkness delta
+- spectral-center delta
+- 32-band spectrum RMSE
+
+IMPORTANT: EtherCompare similarity means measured audio-identity preservation. It is NOT a subjective "better song" score. EtherCritic and future taste/semantic heads remain separate responsibilities.
+
+VERSION + COMPARE FLOW
+----------------------
   ORIGINAL
      -> VARIATION A
-          -> REPAINT A1   [current]
+     -> VARIATION B [HEAD]
 
-PARENT loads VARIATION A.
-Another PARENT loads ORIGINAL.
-At the root, PARENT is a no-op with an explicit status message.
+While A is selected:
+  A = VARIATION A
+  B = HEAD / VARIATION B
 
-CHILD / SIBLING A-B NAVIGATION
-------------------------------
-At a root node, CHILD arrows enter the root's direct child branches.
+  A/B SYNCHRONIZED
+      -> audition B at the same playback position
+      -> audition A at the same playback position
+      -> inspect EtherDNA deltas
+      -> PROMOTE only if the user chooses
 
-When the current node already has a parent, CHILD arrows operate across that common parent's direct children. This means sibling variations can be A/B-switched without returning to the parent between every listen.
+No compare action deletes branches or moves HEAD.
 
-Example:
+CORE API
+--------
+EtherCompare adds:
+- compare_ether_dna(a, b)
+- compare_audio_dna(a_path, b_path)
+- EtherCompareResult
+- EtherCompareDelta
 
-  ORIGINAL
-     -> VARIATION A
-     -> VARIATION B
-     -> VARIATION C
-
-While listening to VARIATION B:
-
-  < CHILD  -> VARIATION A
-  CHILD >  -> VARIATION C
-
-Branch ordering is deterministic: children are sorted by creation timestamp with version ID as a stable tie break, rather than relying on filesystem enumeration order.
-
-HEAD
-----
-HEAD jumps from any node in a root lineage to the version currently promoted for that lineage.
-
-If the current node already is HEAD, EtherBeat reports that directly instead of reloading it.
-
-PROMOTE
--------
-PROMOTE moves the lineage HEAD to the currently loaded version.
-No source, sibling, child or ancestor audio is deleted.
-
-This makes approval explicit:
-
-  generate/edit freely
-      -> compare branches
-      -> choose the version you actually want
-      -> PROMOTE
-
-A future render/edit can still branch from any older node afterward.
-
-AUTOMATIC LINEAGE
------------------
-Version registration remains in ModelRouter rather than only in Win32 button code.
-
-Any successful source-conditioned EtherControl render automatically registers:
-- source/root lineage when needed
-- child version
-- operation type
-- parent relationship
-- producer instruction
-
-The Now Playing workspace simply queries and drives that persistent graph.
-
-TRACK LOADING
--------------
-Loading a generated/local Library track into NOW PLAYING now initializes EtherVersions root metadata automatically when the track has no prior lineage.
-
-Tracked control children retain their existing parent/root metadata; they are not mistakenly re-rooted when loaded later.
-
-CURRENT PRODUCER FLOW
----------------------
-CREATE:
-  EtherComposer
-      -> EtherSearch x4
-      -> EtherDNA
-      -> EtherCritic
-      -> EtherPromote
-      -> NOW PLAYING / EtherVersions root
-
-CONTROL:
-  NOW PLAYING
-      -> Variation / Replace Section
-      -> ModelRouter
-      -> ACE cover / repaint
-      -> new local child audio
-      -> EtherVersions automatic registration
-      -> NOW PLAYING branch
-
-VERSION WORKSPACE:
-  current branch
-      -> PARENT / CHILD A-B / HEAD
-      -> compare
-      -> PROMOTE selected version
-
-ORIGINAL PRESERVATION
----------------------
-EtherVersions never implements destructive undo.
-Version navigation changes which audio node is loaded; promotion changes only the HEAD metadata record.
-All audio branches remain local until the user deliberately removes files outside this workflow.
+The comparison core is provider-independent and UI-independent.
 
 TEST COVERAGE
 -------------
-EtherVersions tests now verify:
-- deterministic root creation
-- root sidecar persistence
-- multiple sibling child registration
-- deterministic direct-child ordering
-- grandchild registration
-- root ID continuity
-- parent resolution
-- direct-child discovery
-- sibling discovery through the common parent
-- promotion / HEAD movement
-- rollback to parent
-- HEAD movement across sibling branches
-- promoted-audio resolution from another branch
-- automatic ModelRouter registration after a successful control render
-- source and child sidecars created through the router path
+The new EtherCompare smoke test verifies:
+- identical DNA produces 1.0 measured similarity
+- identical spectrum produces zero RMSE
+- changed DNA remains normalized
+- energy delta sign
+- low-end delta sign
+- brightness delta sign
+- darkness delta sign
+- rhythmic delta sign
+- spectrum change detection
 
-All existing Core/Search/AutoPromote/Control/ACE-Control/Control-UI tests remain active.
-The native Windows shell itself compiles under MSVC with the version rail and navigation actions wired.
-Ubuntu/GCC validates the portable graph semantics.
+All previous tests remain active:
+- Core
+- EtherSearch
+- AutoPromote
+- EtherControl
+- ACE Control
+- Control UI
+- EtherVersions
 
-CI does not run heavyweight ACE inference because the local model/runtime weights are not installed on GitHub runners.
+The V0.2N native Windows shell compiles under MSVC with MCI position query, seek and A/B actions wired.
+Ubuntu/GCC validates the portable comparison math.
+
+CI does not run heavyweight ACE model inference because local model/runtime weights are not installed on GitHub runners.
 
 LOCAL DATA
 ----------
@@ -161,6 +144,9 @@ Library:
 Control audio:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\...
 
+EtherDNA sidecars:
+  beside analyzed audio as *.etherdna.json
+
 Version sidecars:
   beside tracked audio as *.etherversion.json
 
@@ -169,8 +155,8 @@ Version HEAD records:
 
 CURRENT LIMITS
 --------------
-- The V0.2M rail navigates parent, sibling/direct-child branches and HEAD; a full graphical tree/timeline view is later.
-- Compare is fast branch switching, not simultaneous dual-waveform synchronized A/B playback yet.
+- Synchronized A/B is based on MCI millisecond seek; sample-accurate phase-locked dual-engine switching comes later with a dedicated playback engine.
+- The comparison panel shows a compact subset of EtherCompare metrics; full spectra/overlay visualization can be added later.
 - Extend remains intentionally blocked until continuation behavior is separately validated.
 - ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.

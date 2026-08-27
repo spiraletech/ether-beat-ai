@@ -1,6 +1,7 @@
 #pragma once
 
 #include "etherbeat/GenerationTypes.hpp"
+#include "etherbeat/ProviderTypes.hpp"
 
 #include <filesystem>
 #include <string_view>
@@ -12,6 +13,7 @@ public:
     virtual ~IModelBackend() = default;
 
     [[nodiscard]] virtual std::string_view name() const noexcept = 0;
+    [[nodiscard]] virtual ProviderCapabilities capabilities() const noexcept = 0;
 
     virtual GenerationArtifact generate(
         const GenerationRequest& request,

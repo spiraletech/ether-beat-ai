@@ -6,6 +6,7 @@
 #include "etherbeat/AceStepEngineManager.hpp"
 #include "etherbeat/EtherControlUi.hpp"
 #include "etherbeat/EtherSearch.hpp"
+#include "etherbeat/EtherVersions.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/ModelRouter.hpp"
 
@@ -24,6 +25,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -44,7 +46,7 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"EtherBeatTabbedWindow";
 constexpr DWORD kImmersiveDarkModeAttribute = 20;
 constexpr int kMinWidth = 1120;
-constexpr int kMinHeight = 720;
+constexpr int kMinHeight = 800;
 constexpr UINT WM_APP_WORK_DONE = WM_APP + 41;
 
 constexpr int ID_PROMPT = 2001;
@@ -83,6 +85,11 @@ enum Action {
     ActOpenRuntime,
     ActVariation,
     ActReplaceSection,
+    ActVersionParent,
+    ActVersionPrevChild,
+    ActVersionNextChild,
+    ActVersionHead,
+    ActVersionPromote,
     ActLibraryBase = 1000
 };
 
@@ -111,6 +118,7 @@ fs::path g_nowPlaying;
 fs::path g_reference;
 etherbeat::AudioAnalysis g_nowAnalysis{};
 etherbeat::AudioAnalysis g_referenceAnalysis{};
+std::optional<etherbeat::VersionLineage> g_versionLineage;
 std::wstring g_status = L"ETHERBEAT // READY";
 std::atomic<bool> g_working{false};
 std::mutex g_resultMutex;
@@ -281,6 +289,115 @@ void syncControlWindowToTrack() {
     std::wostringstream value;
     value << std::fixed << std::setprecision(2) << end;
     SetWindowTextW(g_controlEnd, value.str().c_str());
+}
+
+void refreshVersionState() {
+    g_versionLineage.reset();
+    if (g_nowPlaying.empty()) return;
+    try {
+        etherbeat::EtherVersions versions(libraryRoot());
+        versions.ensure_root(g_nowPlaying);
+        g_versionLineage = versions.lineage_for_audio(g_nowPlaying);
+    } catch (...) {
+        g_versionLineage.reset();
+    }
+}
+
+bool loadNowPlaying(const fs::path& path, bool autoplay = true) {
+    if (path.empty() || !fs::exists(path)) return false;
+    g_nowPlaying = path;
+    g_nowAnalysis = etherbeat::analyze_audio_file(g_nowPlaying);
+    syncControlWindowToTrack();
+    refreshVersionState();
+    setScreen(Screen::NowPlaying);
+    if (autoplay) playPath(g_nowPlaying);
+    return true;
+}
+
+std::vector<etherbeat::VersionRecord> versionBranchOptions() {
+    if (!g_versionLineage || g_nowPlaying.empty()) return {};
+    try {
+        etherbeat::EtherVersions versions(libraryRoot());
+        if (g_versionLineage->parent) {
+            return versions.lineage_for_audio(g_versionLineage->parent->audio_path).children;
+        }
+        return g_versionLineage->children;
+    } catch (...) {
+        return {};
+    }
+}
+
+void navigateVersionParent() {
+    if (!g_versionLineage || !g_versionLineage->parent) {
+        setStatus(L"ETHERVERSIONS // already at root");
+        return;
+    }
+    const auto target = g_versionLineage->parent->audio_path;
+    if (loadNowPlaying(target)) setStatus(L"ETHERVERSIONS // PARENT // " + target.filename().wstring());
+}
+
+void navigateVersionHead() {
+    if (g_nowPlaying.empty()) return;
+    try {
+        etherbeat::EtherVersions versions(libraryRoot());
+        const auto target = versions.promoted_audio_for(g_nowPlaying);
+        if (target.empty()) {
+            setStatus(L"ETHERVERSIONS // no promoted HEAD found");
+            return;
+        }
+        if (target == g_nowPlaying) {
+            setStatus(L"ETHERVERSIONS // current version is HEAD");
+            return;
+        }
+        if (loadNowPlaying(target)) setStatus(L"ETHERVERSIONS // HEAD // " + target.filename().wstring());
+    } catch (const std::exception& e) {
+        setStatus(L"ETHERVERSIONS // " + wide(e.what()));
+    }
+}
+
+void promoteCurrentVersion() {
+    if (g_nowPlaying.empty()) return;
+    try {
+        etherbeat::EtherVersions versions(libraryRoot());
+        versions.ensure_root(g_nowPlaying);
+        versions.promote(g_nowPlaying);
+        refreshVersionState();
+        setStatus(L"ETHERVERSIONS // PROMOTED HEAD // " + g_nowPlaying.filename().wstring());
+    } catch (const std::exception& e) {
+        setStatus(L"ETHERVERSIONS // " + wide(e.what()));
+    }
+}
+
+void navigateVersionBranch(int direction) {
+    if (!g_versionLineage) {
+        setStatus(L"ETHERVERSIONS // no lineage available");
+        return;
+    }
+    const auto options = versionBranchOptions();
+    if (options.empty()) {
+        setStatus(g_versionLineage->parent
+            ? L"ETHERVERSIONS // no sibling branches"
+            : L"ETHERVERSIONS // root has no child branches yet");
+        return;
+    }
+
+    std::size_t targetIndex = direction >= 0 ? 0u : options.size() - 1u;
+    if (g_versionLineage->parent) {
+        const auto it = std::find_if(options.begin(), options.end(), [](const etherbeat::VersionRecord& record) {
+            return record.audio_path == g_nowPlaying;
+        });
+        if (it != options.end()) {
+            const auto index = static_cast<std::size_t>(std::distance(options.begin(), it));
+            if (direction >= 0) targetIndex = (index + 1u) % options.size();
+            else targetIndex = (index + options.size() - 1u) % options.size();
+        }
+    }
+
+    const auto target = options[targetIndex].audio_path;
+    if (loadNowPlaying(target)) {
+        setStatus(L"ETHERVERSIONS // BRANCH " + std::to_wstring(targetIndex + 1u) + L"/" +
+                  std::to_wstring(options.size()) + L" // " + target.filename().wstring());
+    }
 }
 
 std::wstring chooseAudio(HWND owner) {
@@ -574,7 +691,7 @@ void drawHome(Graphics& g, float W, float H) {
 
 void drawCreate(Graphics& g, float W, float H) {
     drawText(g, L"CREATE", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"text → 4 drafts → EtherDNA → critic ranking → promoted winner",
+    drawText(g, L"text -> 4 drafts -> EtherDNA -> critic ranking -> promoted winner",
              R(44.f, 166.f, 650.f, 24.f), 11.f, muted());
 
     roundRect(g, R(42.f, 208.f, W - 84.f, H - 278.f), 24.f, panel(), Color(85, 98, 89, 70));
@@ -630,6 +747,45 @@ void drawLibrary(Graphics& g, float W, float H) {
     }
 }
 
+void drawVersionRail(Graphics& g, float W, float H) {
+    const RectF rail = R(42.f, H - 158.f, W - 84.f, 46.f);
+    roundRect(g, rail, 18.f, Color(248, 8, 8, 9), Color(96, 113, 92, 57));
+
+    std::wstring title = L"ETHERVERSIONS // UNTRACKED";
+    std::wstring detail = L"load or generate a track to initialize lineage";
+    bool isHead = false;
+    if (g_versionLineage) {
+        isHead = g_versionLineage->current_is_promoted();
+        title = isHead ? L"ETHERVERSIONS // HEAD" : L"ETHERVERSIONS // BRANCH";
+        const auto branches = versionBranchOptions();
+        detail = wide(g_versionLineage->current.operation) + L" // root " +
+                 wide(g_versionLineage->current.root_id.substr(0, 8));
+        if (g_versionLineage->parent) {
+            const auto it = std::find_if(branches.begin(), branches.end(), [](const etherbeat::VersionRecord& r) {
+                return r.audio_path == g_nowPlaying;
+            });
+            if (it != branches.end()) {
+                const auto index = static_cast<std::size_t>(std::distance(branches.begin(), it));
+                detail += L" // branch " + std::to_wstring(index + 1u) + L"/" + std::to_wstring(branches.size());
+            }
+        } else {
+            detail += L" // children " + std::to_wstring(g_versionLineage->children.size());
+        }
+    }
+
+    drawText(g, title, R(rail.X + 16.f, rail.Y + 7.f, 205.f, 16.f), 9.f,
+             isHead ? amber() : warm(), FontStyleBold);
+    drawText(g, detail, R(rail.X + 16.f, rail.Y + 24.f, 220.f, 14.f), 8.f, muted());
+
+    float x = rail.X + 240.f;
+    const float y = rail.Y + 7.f;
+    drawButton(g, R(x, y, 92.f, 32.f), L"PARENT", ActVersionParent); x += 99.f;
+    drawButton(g, R(x, y, 105.f, 32.f), L"< CHILD", ActVersionPrevChild); x += 112.f;
+    drawButton(g, R(x, y, 105.f, 32.f), L"CHILD >", ActVersionNextChild); x += 112.f;
+    drawButton(g, R(x, y, 82.f, 32.f), L"HEAD", ActVersionHead, isHead); x += 89.f;
+    drawButton(g, R(x, y, 104.f, 32.f), L"PROMOTE", ActVersionPromote, !isHead);
+}
+
 void drawNowPlaying(Graphics& g, float W, float H) {
     drawText(g, L"NOW PLAYING", R(42.f, 126.f, 330.f, 38.f), 27.f, warm(), FontStyleBold);
     if (g_nowPlaying.empty()) {
@@ -644,9 +800,9 @@ void drawNowPlaying(Graphics& g, float W, float H) {
     const float contentW = W - 84.f;
     const float gap = 18.f;
     const float analyzerW = contentW * .58f;
-    const RectF analyzer = R(42.f, 220.f, analyzerW, H - 350.f);
+    const RectF analyzer = R(42.f, 220.f, analyzerW, H - 390.f);
     const RectF control = R(analyzer.GetRight() + gap, 220.f,
-                            contentW - analyzerW - gap, H - 350.f);
+                            contentW - analyzerW - gap, H - 390.f);
 
     drawAnalyzer(g, analyzer, g_nowAnalysis);
     roundRect(g, control, 22.f, panel(), Color(104, 108, 87, 58));
@@ -665,23 +821,25 @@ void drawNowPlaying(Graphics& g, float W, float H) {
     drawText(g, L"END", R(control.X + 132.f, control.Y + 270.f, 80.f, 16.f),
              8.f, muted(), FontStyleBold);
 
-    const float buttonY = control.GetBottom() - 56.f;
+    const float buttonY = control.GetBottom() - 52.f;
     const float buttonW = (control.Width - 52.f) * .5f;
-    drawButton(g, R(control.X + 18.f, buttonY, buttonW, 40.f),
+    drawButton(g, R(control.X + 18.f, buttonY, buttonW, 38.f),
                g_working ? L"WORKING..." : L"VARIATION", ActVariation, true);
-    drawButton(g, R(control.X + 34.f + buttonW, buttonY, buttonW, 40.f),
+    drawButton(g, R(control.X + 34.f + buttonW, buttonY, buttonW, 38.f),
                g_working ? L"WORKING..." : L"REPLACE SECTION", ActReplaceSection);
+
+    drawVersionRail(g, W, H);
 
     drawButton(g, R(42.f, H - 104.f, 120.f, 42.f), L"PLAY", ActPlay, true);
     drawButton(g, R(174.f, H - 104.f, 120.f, 42.f), L"STOP", ActStop);
     drawButton(g, R(306.f, H - 104.f, 150.f, 42.f), L"OPEN LIBRARY", ActOpenLibrary);
-    drawText(g, L"Original stays local. Every control render becomes a new version.",
+    drawText(g, L"Branch freely. Promote only the version you want as HEAD.",
              R(480.f, H - 94.f, W - 520.f, 26.f), 9.f, muted());
 }
 
 void drawSongLab(Graphics& g, float W, float H) {
     drawText(g, L"SONG LAB", R(42.f, 126.f, 300.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"reference audio → EtherPlay FFT → measurable sound DNA",
+    drawText(g, L"reference audio -> EtherPlay FFT -> measurable sound DNA",
              R(44.f, 166.f, 560.f, 22.f), 11.f, muted());
     drawButton(g, R(W - 224.f, 132.f, 174.f, 38.f), L"CHOOSE AUDIO", ActChooseReference, true);
 
@@ -710,7 +868,7 @@ void drawEngine(Graphics& g, float W, float H) {
              10.f, amber(), FontStyleBold);
     drawText(g, L"COVER + REPAINT READY", R(card.X + 24.f, card.Y + 142.f, 360.f, 28.f),
              16.f, warm(), FontStyleBold);
-    drawText(g, L"Variation and Replace Section now route through ACE source-audio control. Component locks, symbolic chords and isolated drum/melody conditioning remain gated until a provider can truly honor them.",
+    drawText(g, L"Variation and Replace Section route through ACE source-audio control. EtherVersions now preserves the entire edit graph and promoted HEAD locally.",
              R(card.X + 24.f, card.Y + 182.f, card.Width * .54f, 86.f), 11.f, muted());
 
     const float sx = card.X + card.Width * .62f;
@@ -818,10 +976,8 @@ void handleAction(int action) {
     if (action >= ActLibraryBase && action < ActLibraryBase + 100) {
         const std::size_t index = static_cast<std::size_t>(action - ActLibraryBase);
         if (index < g_library.size()) {
-            g_nowPlaying = g_library[index];
-            g_nowAnalysis = etherbeat::analyze_audio_file(g_nowPlaying);
-            syncControlWindowToTrack();
-            setScreen(Screen::NowPlaying);
+            loadNowPlaying(g_library[index], false);
+            setStatus(L"LIBRARY // " + g_nowPlaying.filename().wstring());
         }
         return;
     }
@@ -836,6 +992,11 @@ void handleAction(int action) {
     case ActGenerate: startGenerate(); break;
     case ActVariation: startControl(etherbeat::ControlUiAction::Variation); break;
     case ActReplaceSection: startControl(etherbeat::ControlUiAction::ReplaceSection); break;
+    case ActVersionParent: navigateVersionParent(); break;
+    case ActVersionPrevChild: navigateVersionBranch(-1); break;
+    case ActVersionNextChild: navigateVersionBranch(1); break;
+    case ActVersionHead: navigateVersionHead(); break;
+    case ActVersionPromote: promoteCurrentVersion(); break;
     case ActChooseReference: {
         const auto chosen = chooseAudio(g_window);
         if (!chosen.empty()) {
@@ -931,6 +1092,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_nowAnalysis = analysis;
             SetWindowTextW(g_seed, std::to_wstring(seed).c_str());
             syncControlWindowToTrack();
+            refreshVersionState();
             refreshLibrary();
             setStatus(L"ETHERSEARCH WINNER // " + artifact.filename().wstring());
             setScreen(Screen::NowPlaying);
@@ -939,8 +1101,9 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_nowPlaying = artifact;
             g_nowAnalysis = analysis;
             syncControlWindowToTrack();
+            refreshVersionState();
             refreshLibrary();
-            setStatus((kind == WorkKind::ControlReplace ? L"REPAINT VERSION // " : L"VARIATION VERSION // ")
+            setStatus((kind == WorkKind::ControlReplace ? L"REPAINT BRANCH // " : L"VARIATION BRANCH // ")
                       + artifact.filename().wstring());
             setScreen(Screen::NowPlaying);
             playPath(g_nowPlaying);
@@ -996,7 +1159,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!RegisterClassExW(&wc)) return 1;
 
     HWND hwnd = CreateWindowExW(0, kWindowClass, L"ETHERBEAT // Alien Workshop V0.2",
-        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820,
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 840,
         nullptr, nullptr, instance, nullptr);
     if (!hwnd) return 1;
 

@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2D
+ETHERBEAT // ALIEN WORKSHOP V0.2E
 
 UI ANCHOR
 ---------
@@ -6,67 +6,89 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-NEW IN V0.2D // PROVIDER ROUTER V0.1
------------------------------------
-EtherBeat no longer assumes one model backend equals the entire music engine.
+NEW IN V0.2E // ETHERDRAFT V0.1
+------------------------------
+EtherBeat now has a multi-candidate draft layer above the provider router.
 
-Generation requests now carry a renderer intent:
+One source request can produce a reproducible batch of musical candidates instead of treating generation as one irreversible answer.
 
-  AUTO | DRAFT | QUALITY | CONTROL | VOCAL
+ETHERDRAFT CONTRACT
+-------------------
+Default batch size: 4 candidates.
+Supported range: 1-8 candidates.
 
-Every registered provider advertises explicit capabilities, including:
-- text-to-instrumental
-- variation
-- extend
-- audio-to-audio
-- reference audio support
-- Draft role
-- Quality role
-- Control role
-- Vocal role
-- local-runtime status
+Each candidate receives:
+- batch index
+- deterministic derived seed
+- Draft renderer intent
+- selected provider lineage
+- generated audio artifact
+- generation metadata artifact
+- independent success/error state
 
-ROUTING RULES
--------------
-AUTO text-to-instrumental jobs resolve to QUALITY.
-Variation / Extend / Audio-to-Audio jobs resolve to CONTROL.
-Explicit DRAFT / QUALITY / CONTROL / VOCAL intent is respected.
+Candidate 0 preserves the resolved base seed. Later candidates derive stable, distinct seeds from that base seed.
 
-EtherBeat selects only a provider that supports both the generation mode and requested role.
-Reference requests also require explicit reference-audio capability.
+A fixed source seed therefore recreates the same candidate seed search-space across runs.
 
-If no provider supports the job, EtherBeat now fails clearly instead of silently sending the request to an incompatible model.
+BATCH MANIFEST
+--------------
+EtherDraft writes a persistent manifest:
 
-CURRENT LIVE PROVIDER
----------------------
-ACE-Step remains the current local text-to-instrumental renderer and therefore covers the present Draft/Quality path.
+  draft-<base-seed>-<timestamp>.etherdraft.json
 
-No fake Control or Vocal provider is registered yet. Those jobs remain intentionally unavailable until dedicated provider mappings are implemented.
+The manifest records:
+- schema etherbeat.draft.v1
+- batch ID
+- base seed
+- source prompt
+- candidate count
+- success count
+- per-candidate seed
+- provider
+- audio/metadata paths
+- per-candidate error state
+
+One failed candidate does not erase successful siblings. V0.1 can continue the batch after an individual failure.
 
 ENGINE STACK
 ------------
   ETHERBEAT UI
       -> EtherDNA V0.1
       -> EtherComposer V0.1
-      -> Provider Router V0.1
-          -> Draft provider
-          -> Quality provider
-          -> Control provider
-          -> Vocal provider
-      -> selected renderer
-      -> generated audio
-      -> library / now playing / analyzer
+      -> EtherDraft V0.1
+          -> Provider Router V0.1
+              -> Draft provider
+              -> Quality provider
+              -> Control provider
+              -> Vocal provider
+          -> candidate A
+          -> candidate B
+          -> candidate C
+          -> candidate D
+      -> future EtherCritic ranking
+      -> selected candidate / Quality render
 
-The registry is provider-name agnostic. Future ACE variants, JASCO-style control engines, SongGeneration-class vocal renderers, or EtherTech-native models can be registered without replacing Composer, EtherDNA or the EtherBeat UI shell.
+CURRENT LIVE PROVIDER
+---------------------
+ACE-Step remains the current local text-to-instrumental renderer and advertises Draft + Quality capability.
+The EtherDraft layer is provider-agnostic, so a faster dedicated Draft provider can replace it later without changing the batch contract or EtherBeat UI.
 
-TESTED ROUTING CONTRACT
------------------------
+TESTED ETHERDRAFT CONTRACT
+--------------------------
 Automated tests verify:
-- AUTO text generation chooses a Quality provider.
-- Explicit Draft chooses a Draft provider.
-- Variation requires a reference-capable Control provider.
-- Unsupported Vocal work is rejected instead of falling back incorrectly.
-- Existing single-provider generation remains compatible.
+- four requested candidates produce four successful artifacts
+- all candidate seeds are distinct
+- candidate 0 preserves the supplied base seed
+- every candidate is routed with Draft intent
+- the batch manifest is created
+- manifest prompt and success lineage are preserved
+- Windows/MSVC and Ubuntu/GCC both pass the same test suite
+
+UI NOTE
+-------
+V0.2E establishes and validates the Draft engine substrate first.
+The existing CREATE button remains the direct Quality-generation path in this package.
+Draft candidate selection will become useful in the UI when the next ranking/critic layer can score and compare the batch rather than dumping four unranked files onto the user.
 
 LOCAL DATA
 ----------
@@ -78,7 +100,8 @@ Generated library:
 
 CURRENT LIMITS
 --------------
-- ACE-Step is still the only live model provider bundled into the current Windows path.
+- EtherDraft V0.1 is sequential; future providers may support parallel/batched inference.
+- No EtherCritic ranking exists yet.
 - Dedicated Control and Vocal providers are not wired yet.
 - EtherDNA learned embeddings are a later layer; V0.1 remains DSP-derived.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

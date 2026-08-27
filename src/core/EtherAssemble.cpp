@@ -1,4 +1,5 @@
 #include "etherbeat/EtherAssemble.hpp"
+#include "etherbeat/EtherSeam.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -139,10 +140,12 @@ void append_with_crossfade(std::vector<float>& output, const PcmAudio& segment,
     const std::size_t channels = segment.channels;
     const std::size_t segment_frames = segment.frame_count();
     const std::size_t output_frames_before = output.size() / channels;
-    const std::size_t requested_fade = static_cast<std::size_t>(std::llround(std::max(0.0, requested_crossfade_seconds) * segment.sample_rate));
+    const std::size_t requested_fade = static_cast<std::size_t>(std::llround(
+        std::max(0.0, requested_crossfade_seconds) * segment.sample_rate));
     const std::size_t fade_frames = std::min({requested_fade, output_frames_before, segment_frames});
     const std::size_t slot_start_frame = output_frames_before - fade_frames;
     slot_result.output_start_seconds = static_cast<double>(slot_start_frame) / segment.sample_rate;
+    slot_result.applied_crossfade_seconds = static_cast<double>(fade_frames) / segment.sample_rate;
 
     if (fade_frames == 0) {
         output.insert(output.end(), segment.samples.begin(), segment.samples.end());
@@ -191,14 +194,18 @@ void write_manifest(const ArrangementPlan& plan, const AssembleResult& result) {
     std::ofstream out(result.manifest_path, std::ios::binary | std::ios::trunc);
     if (!out) throw std::runtime_error("EtherAssemble could not create manifest");
     out << std::fixed << std::setprecision(6)
-        << "{\n  \"schema\": \"etherbeat.assemble.v1\",\n"
+        << "{\n  \"schema\": \"etherbeat.assemble.v2\",\n"
         << "  \"source_audio\": \"" << escape_json(plan.source_audio.generic_string()) << "\",\n"
         << "  \"arrangement_revision\": " << plan.revision << ",\n"
         << "  \"output_audio\": \"" << escape_json(result.audio_path.generic_string()) << "\",\n"
         << "  \"sample_rate\": " << result.sample_rate << ",\n"
         << "  \"channels\": " << result.channels << ",\n"
         << "  \"duration_seconds\": " << result.duration_seconds << ",\n"
-        << "  \"crossfade_seconds\": " << result.crossfade_seconds << ",\n"
+        << "  \"fixed_crossfade_seconds\": " << result.crossfade_seconds << ",\n"
+        << "  \"adaptive_seams\": " << (result.adaptive_seams ? "true" : "false") << ",\n"
+        << "  \"average_seam_score\": " << result.average_seam_score << ",\n"
+        << "  \"max_seam_score\": " << result.max_seam_score << ",\n"
+        << "  \"severe_seam_count\": " << result.severe_seam_count << ",\n"
         << "  \"slots\": [\n";
     for (std::size_t i = 0; i < result.slots.size(); ++i) {
         const auto& slot = result.slots[i];
@@ -208,7 +215,16 @@ void write_manifest(const ArrangementPlan& plan, const AssembleResult& result) {
             << "\", \"generated\": " << (slot.generated ? "true" : "false")
             << ", \"input_duration\": " << slot.input_duration_seconds
             << ", \"output_start\": " << slot.output_start_seconds
-            << ", \"output_end\": " << slot.output_end_seconds << "}";
+            << ", \"output_end\": " << slot.output_end_seconds
+            << ", \"seam_analyzed\": " << (slot.seam_analyzed ? "true" : "false")
+            << ", \"seam_score\": " << slot.seam_score
+            << ", \"rms_jump\": " << slot.rms_jump
+            << ", \"spectral_jump\": " << slot.spectral_jump
+            << ", \"dc_jump\": " << slot.dc_jump
+            << ", \"transient_collision\": " << slot.transient_collision
+            << ", \"sample_jump\": " << slot.sample_jump
+            << ", \"applied_crossfade_seconds\": " << slot.applied_crossfade_seconds
+            << ", \"severe_seam\": " << (slot.severe_seam ? "true" : "false") << "}";
         if (i + 1u < result.slots.size()) out << ',';
         out << '\n';
     }
@@ -231,12 +247,20 @@ AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
     if (output_audio_path.empty()) throw std::runtime_error("EtherAssemble output path is empty");
     if (!decoder) throw std::runtime_error("EtherAssemble requires an audio decoder");
     options.crossfade_seconds = std::clamp(options.crossfade_seconds, 0.0, 0.250);
+    options.min_crossfade_seconds = std::clamp(options.min_crossfade_seconds, 0.0, 0.250);
+    options.max_crossfade_seconds = std::clamp(options.max_crossfade_seconds,
+                                                options.min_crossfade_seconds,
+                                                0.250);
+    options.severe_seam_score = std::clamp(options.severe_seam_score, 0.0, 1.0);
 
     std::optional<PcmAudio> decoded_source;
+    std::optional<PcmAudio> previous_segment;
     std::uint32_t target_rate = 0;
     std::uint16_t target_channels = 0;
 
-    const bool needs_source = std::any_of(plan.slots.begin(), plan.slots.end(), [](const ArrangementSlot& slot) { return slot.has_source_audio(); });
+    const bool needs_source = std::any_of(plan.slots.begin(), plan.slots.end(), [](const ArrangementSlot& slot) {
+        return slot.has_source_audio();
+    });
     if (needs_source) {
         decoded_source = decoder(plan.source_audio);
         if (!decoded_source->valid()) throw std::runtime_error("EtherAssemble could not decode source audio");
@@ -249,6 +273,10 @@ AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
     result.audio_path = output_audio_path;
     result.manifest_path = ether_assemble_manifest_path(output_audio_path);
     result.crossfade_seconds = options.crossfade_seconds;
+    result.adaptive_seams = options.adaptive_seams;
+
+    double seam_score_sum = 0.0;
+    std::size_t seam_count = 0;
 
     for (const auto& slot : plan.slots) {
         PcmAudio segment;
@@ -269,7 +297,10 @@ AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
             generated = true;
         }
 
-        if (target_rate == 0) { target_rate = segment.sample_rate; target_channels = segment.channels; }
+        if (target_rate == 0) {
+            target_rate = segment.sample_rate;
+            target_channels = segment.channels;
+        }
         segment = normalize_format(std::move(segment), target_rate, target_channels);
 
         AssembleSlotResult slot_result;
@@ -278,8 +309,47 @@ AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
         slot_result.origin = slot.origin;
         slot_result.generated = generated;
         slot_result.input_duration_seconds = segment.duration_seconds();
-        append_with_crossfade(output_samples, segment, options.crossfade_seconds, slot_result);
+
+        double requested_crossfade = 0.0;
+        if (previous_segment) {
+            const auto seam = analyze_seam(
+                *previous_segment,
+                segment,
+                SeamOptions{
+                    .analysis_window_seconds = 0.030,
+                    .min_crossfade_seconds = options.min_crossfade_seconds,
+                    .max_crossfade_seconds = options.max_crossfade_seconds,
+                    .severe_score = options.severe_seam_score});
+
+            if (seam.ready) {
+                slot_result.seam_analyzed = true;
+                slot_result.seam_score = seam.seam_score;
+                slot_result.rms_jump = seam.rms_jump;
+                slot_result.spectral_jump = seam.spectral_jump;
+                slot_result.dc_jump = seam.dc_jump;
+                slot_result.transient_collision = seam.transient_collision;
+                slot_result.sample_jump = seam.sample_jump;
+                slot_result.severe_seam = seam.severe;
+
+                seam_score_sum += seam.seam_score;
+                ++seam_count;
+                result.max_seam_score = std::max(result.max_seam_score, seam.seam_score);
+                if (seam.severe) ++result.severe_seam_count;
+
+                if (options.reject_severe_seams && seam.severe) {
+                    throw std::runtime_error("EtherSeam rejected high-risk boundary before slot: " + slot.label);
+                }
+                requested_crossfade = options.adaptive_seams
+                    ? seam.recommended_crossfade_seconds
+                    : options.crossfade_seconds;
+            } else {
+                requested_crossfade = options.crossfade_seconds;
+            }
+        }
+
+        append_with_crossfade(output_samples, segment, requested_crossfade, slot_result);
         result.slots.push_back(std::move(slot_result));
+        previous_segment = std::move(segment);
     }
 
     if (result.slots.empty() || output_samples.empty()) throw std::runtime_error("EtherAssemble produced no audio slots");
@@ -287,6 +357,7 @@ AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
     result.sample_rate = target_rate;
     result.channels = target_channels;
     result.duration_seconds = assembled.duration_seconds();
+    result.average_seam_score = seam_count == 0 ? 0.0 : seam_score_sum / static_cast<double>(seam_count);
     write_pcm16_wav(result.audio_path, assembled);
     write_manifest(plan, result);
     return result;

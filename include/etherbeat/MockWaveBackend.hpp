@@ -7,6 +7,7 @@ namespace etherbeat {
 class MockWaveBackend final : public IModelBackend {
 public:
     [[nodiscard]] std::string_view name() const noexcept override;
+    [[nodiscard]] ProviderCapabilities capabilities() const noexcept override;
 
     GenerationArtifact generate(
         const GenerationRequest& request,

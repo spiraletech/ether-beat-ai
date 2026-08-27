@@ -3,8 +3,8 @@
 
 #include <chrono>
 
-// V0.2R is additive: embed the proven V0.2Q arrangement workspace without
-// its entry point, then add physical arrangement rendering above it.
+// V0.2S keeps the V0.2R physical assembly workspace and upgrades every
+// section boundary with adaptive EtherSeam analysis before the WAV is written.
 #define ETHERBEAT_ARRANGEMENT_EMBEDDED
 #include "EtherBeatTabbedWinArrangement.cpp"
 #undef ETHERBEAT_ARRANGEMENT_EMBEDDED
@@ -18,6 +18,9 @@ std::wstring g_assembleError;
 fs::path g_assembleArtifact;
 etherbeat::AudioAnalysis g_assembleAnalysis{};
 std::size_t g_assembleSlotCount = 0;
+double g_assembleAverageSeam = 0.0;
+double g_assembleMaxSeam = 0.0;
+std::size_t g_assembleSevereSeams = 0;
 
 RectF assembleCardRect(HWND hwnd) {
     const RectF arrangement = arrangementCardRect(hwnd);
@@ -40,7 +43,8 @@ std::filesystem::path makeAssembledOutput(const fs::path& source, std::uint64_t 
 }
 
 void postAssembleResult(bool success, std::wstring error, fs::path artifact,
-                        etherbeat::AudioAnalysis analysis, std::size_t slot_count) {
+                        etherbeat::AudioAnalysis analysis, std::size_t slot_count,
+                        double average_seam, double max_seam, std::size_t severe_seams) {
     {
         std::scoped_lock lock(g_assembleMutex);
         g_assembleSuccess = success;
@@ -48,6 +52,9 @@ void postAssembleResult(bool success, std::wstring error, fs::path artifact,
         g_assembleArtifact = std::move(artifact);
         g_assembleAnalysis = std::move(analysis);
         g_assembleSlotCount = slot_count;
+        g_assembleAverageSeam = average_seam;
+        g_assembleMaxSeam = max_seam;
+        g_assembleSevereSeams = severe_seams;
     }
     if (g_window) PostMessageW(g_window, WM_APP_ASSEMBLE_DONE, 0, 0);
 }
@@ -71,7 +78,7 @@ void startAssemble() {
 
     if (g_working.exchange(true)) return;
     stopPlayback();
-    setStatus(L"ETHERASSEMBLE // resolving slots, generating placeholders, crossfading WAV...");
+    setStatus(L"ETHERSEAM // measuring boundaries, adapting fades, assembling WAV...");
     InvalidateRect(g_window, nullptr, FALSE);
 
     std::thread([plan, source, output, root, bpm, key, producer_context, blueprint] {
@@ -104,7 +111,13 @@ void startAssemble() {
                     const auto artifact = router.generate(request, fragment_root);
                     return etherbeat::decode_audio_pcm_file(artifact.audio_path);
                 },
-                {.crossfade_seconds=0.020, .require_all_placeholders=true});
+                {.crossfade_seconds=0.020,
+                 .require_all_placeholders=true,
+                 .adaptive_seams=true,
+                 .min_crossfade_seconds=0.005,
+                 .max_crossfade_seconds=0.100,
+                 .severe_seam_score=0.82,
+                 .reject_severe_seams=false});
 
             const auto analysis = etherbeat::analyze_audio_file(rendered.audio_path);
             if (!analysis.ready) {
@@ -125,9 +138,11 @@ void startAssemble() {
                 "arrangement_assemble",
                 "assembled arrangement revision " + std::to_string(plan.revision));
 
-            postAssembleResult(true, L"", rendered.audio_path, analysis, rendered.slots.size());
+            postAssembleResult(true, L"", rendered.audio_path, analysis, rendered.slots.size(),
+                               rendered.average_seam_score, rendered.max_seam_score,
+                               rendered.severe_seam_count);
         } catch (const std::exception& e) {
-            postAssembleResult(false, wide(e.what()), {}, {}, 0);
+            postAssembleResult(false, wide(e.what()), {}, {}, 0, 0.0, 0.0, 0);
         }
     }).detach();
 }
@@ -147,7 +162,7 @@ void drawAssembleOverlay(HWND hwnd) {
     const RectF button = assembleButtonRect(hwnd);
     roundRect(g, card, 12.f, Color(250, 7, 7, 8), Color(105, 105, 85, 53), 1.f);
     drawText(g,
-             L"ETHERASSEMBLE // REAL WAV // 20ms XFADE // +ALT = QUALITY GENERATE",
+             L"ETHERSEAM // ADAPTIVE 5-100ms // DSP JOIN SCORE // +ALT = QUALITY GENERATE",
              R(card.X + 10.f, card.Y + 10.f, card.Width - 170.f, 18.f),
              8.f, muted(), FontStyleBold);
     roundRect(g, button, 10.f,
@@ -176,6 +191,9 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         fs::path artifact;
         etherbeat::AudioAnalysis analysis;
         std::size_t slots = 0;
+        double average_seam = 0.0;
+        double max_seam = 0.0;
+        std::size_t severe_seams = 0;
         {
             std::scoped_lock lock(g_assembleMutex);
             success = g_assembleSuccess;
@@ -183,14 +201,20 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             artifact = g_assembleArtifact;
             analysis = g_assembleAnalysis;
             slots = g_assembleSlotCount;
+            average_seam = g_assembleAverageSeam;
+            max_seam = g_assembleMaxSeam;
+            severe_seams = g_assembleSevereSeams;
         }
         g_working = false;
         if (success && !artifact.empty()) {
             refreshLibrary();
             loadNowPlaying(artifact, true);
-            setStatus(L"ETHERASSEMBLE // COMPLETE // " + std::to_wstring(slots) +
-                      L" slots // " + std::to_wstring(static_cast<int>(analysis.duration_seconds)) +
-                      L" sec // new version child");
+            const int avg_pct = static_cast<int>(std::round(average_seam * 100.0));
+            const int max_pct = static_cast<int>(std::round(max_seam * 100.0));
+            setStatus(L"ETHERSEAM // COMPLETE // " + std::to_wstring(slots) +
+                      L" slots // AVG " + std::to_wstring(avg_pct) + L"% // MAX " +
+                      std::to_wstring(max_pct) + L"% // severe " + std::to_wstring(severe_seams) +
+                      L" // " + std::to_wstring(static_cast<int>(analysis.duration_seconds)) + L" sec");
         } else {
             setStatus(L"ETHERASSEMBLE // FAILED // " + error);
         }
@@ -232,7 +256,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     if (!RegisterClassExW(&wc)) return 1;
 
     HWND hwnd = CreateWindowExW(
-        0, kWindowClass, L"ETHERBEAT // Alien Workshop V0.2R",
+        0, kWindowClass, L"ETHERBEAT // Alien Workshop V0.2S",
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 1040,
         nullptr, nullptr, instance, nullptr);
     if (!hwnd) return 1;

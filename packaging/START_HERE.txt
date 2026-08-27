@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2C
+ETHERBEAT // ALIEN WORKSHOP V0.2D
 
 UI ANCHOR
 ---------
@@ -6,66 +6,67 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-NEW IN V0.2C // ETHERDNA V0.1
-----------------------------
-EtherBeat now persists measurable audio identity after native analysis.
+NEW IN V0.2D // PROVIDER ROUTER V0.1
+-----------------------------------
+EtherBeat no longer assumes one model backend equals the entire music engine.
 
-Whenever a WAV/MP3/FLAC is successfully analyzed by EtherBeat, the analyzer builds an EtherDNA object and writes a sidecar beside the audio:
+Generation requests now carry a renderer intent:
 
-  song.wav
-  song.wav.etherdna.json
+  AUTO | DRAFT | QUALITY | CONTROL | VOCAL
 
-EtherDNA V0.1 stores:
-- schema/version
-- source audio lineage
-- sample rate / channels / analyzed duration
-- energy
-- bass / mid / treble
-- beat peak
-- 32-band normalized spectrum
-- derived low-end weight
-- brightness
-- darkness
-- rhythmic activity
-- normalized spectral center
+Every registered provider advertises explicit capabilities, including:
+- text-to-instrumental
+- variation
+- extend
+- audio-to-audio
+- reference audio support
+- Draft role
+- Quality role
+- Control role
+- Vocal role
+- local-runtime status
 
-These derived values are measurable summaries, not guessed genres.
+ROUTING RULES
+-------------
+AUTO text-to-instrumental jobs resolve to QUALITY.
+Variation / Extend / Audio-to-Audio jobs resolve to CONTROL.
+Explicit DRAFT / QUALITY / CONTROL / VOCAL intent is respected.
 
-COMPOSER BRIDGE
----------------
-EtherComposer can now load the .etherdna.json sidecar associated with a reference_audio request.
-When DNA exists, Composer injects the measured reference identity into the renderer blueprint before model invocation.
+EtherBeat selects only a provider that supports both the generation mode and requested role.
+Reference requests also require explicit reference-audio capability.
 
-This establishes the engine path:
+If no provider supports the job, EtherBeat now fails clearly instead of silently sending the request to an incompatible model.
 
-  AUDIO
-    -> EtherPlay-derived native FFT
-    -> EtherDNA
-    -> persistent sidecar
-    -> EtherComposer
-    -> model router / future control engines
+CURRENT LIVE PROVIDER
+---------------------
+ACE-Step remains the current local text-to-instrumental renderer and therefore covers the present Draft/Quality path.
 
-Existing CREATE behavior still works without a reference.
-Reference-conditioned generation modes are still being built, but the persistent data contract they will consume now exists and is tested.
+No fake Control or Vocal provider is registered yet. Those jobs remain intentionally unavailable until dedicated provider mappings are implemented.
 
-SONG LAB
---------
-Selecting reference audio continues to run Windows Media Foundation decoding + the native 1024-point Hann FFT.
-Successful analysis now also emits EtherDNA automatically.
-
-NOW PLAYING
------------
-Generated tracks analyzed by Now Playing also receive EtherDNA sidecars automatically, so EtherBeat can later compare generations, rank candidates and learn taste from measurable output traits.
-
-CURRENT ENGINE STACK
---------------------
+ENGINE STACK
+------------
   ETHERBEAT UI
-      -> EtherComposer V0.1
       -> EtherDNA V0.1
-      -> ModelRouter
-      -> managed local renderer
+      -> EtherComposer V0.1
+      -> Provider Router V0.1
+          -> Draft provider
+          -> Quality provider
+          -> Control provider
+          -> Vocal provider
+      -> selected renderer
       -> generated audio
       -> library / now playing / analyzer
+
+The registry is provider-name agnostic. Future ACE variants, JASCO-style control engines, SongGeneration-class vocal renderers, or EtherTech-native models can be registered without replacing Composer, EtherDNA or the EtherBeat UI shell.
+
+TESTED ROUTING CONTRACT
+-----------------------
+Automated tests verify:
+- AUTO text generation chooses a Quality provider.
+- Explicit Draft chooses a Draft provider.
+- Variation requires a reference-capable Control provider.
+- Unsupported Vocal work is rejected instead of falling back incorrectly.
+- Existing single-provider generation remains compatible.
 
 LOCAL DATA
 ----------
@@ -77,7 +78,7 @@ Generated library:
 
 CURRENT LIMITS
 --------------
-- EtherDNA V0.1 is DSP-derived; learned CLAP/MERT-style embeddings are a later layer.
-- Reference audio is measurable and persistent, but dedicated reference/extend/repaint renderer mappings are still future steps.
-- EtherComposer V0.1 remains deterministic and inspectable.
+- ACE-Step is still the only live model provider bundled into the current Windows path.
+- Dedicated Control and Vocal providers are not wired yet.
+- EtherDNA learned embeddings are a later layer; V0.1 remains DSP-derived.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

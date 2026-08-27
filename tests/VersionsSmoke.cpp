@@ -4,6 +4,7 @@
 #include "etherbeat/ModelRouter.hpp"
 #include "etherbeat/ProviderTypes.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -60,9 +61,11 @@ int main() {
 
         const auto original = root / "original.wav";
         const auto variation = root / "control" / "variation.wav";
+        const auto sibling = root / "control" / "variation-b.wav";
         const auto repaint = root / "control" / "repaint.wav";
         touch(original);
         touch(variation);
+        touch(sibling);
         touch(repaint);
 
         etherbeat::EtherVersions versions(root);
@@ -78,6 +81,19 @@ int main() {
         require(v1.parent_id == v0.version_id, "variation parent mismatch");
         require(v1.parent_audio_path == original, "variation parent path mismatch");
 
+        const auto vSibling = versions.register_child(
+            original, sibling, "variation", "make a stranger sibling");
+        require(vSibling.root_id == v0.root_id, "sibling root id changed");
+        require(vSibling.parent_id == v0.version_id, "sibling parent mismatch");
+
+        const auto rootLineage = versions.lineage_for_audio(original);
+        require(rootLineage.children.size() == 2, "root should expose two direct branches");
+        require(std::is_sorted(rootLineage.children.begin(), rootLineage.children.end(),
+            [](const etherbeat::VersionRecord& a, const etherbeat::VersionRecord& b) {
+                if (a.created_unix_ms != b.created_unix_ms) return a.created_unix_ms < b.created_unix_ms;
+                return a.version_id < b.version_id;
+            }), "direct branch ordering must be deterministic");
+
         const auto v2 = versions.register_child(
             variation, repaint, "replace_section", "empty out the hook");
         require(v2.root_id == v0.root_id, "repaint root id changed");
@@ -89,6 +105,13 @@ int main() {
         require(lineage.children.size() == 1, "variation should have one child");
         require(lineage.children.front().audio_path == repaint, "child path mismatch");
         require(!lineage.current_is_promoted(), "variation should not initially be promoted");
+
+        const auto siblingLineage = versions.lineage_for_audio(sibling);
+        require(siblingLineage.parent.has_value(), "sibling parent not found");
+        require(siblingLineage.parent->audio_path == original, "sibling parent path mismatch");
+        const auto siblingParentLineage = versions.lineage_for_audio(siblingLineage.parent->audio_path);
+        require(siblingParentLineage.children.size() == 2,
+                "sibling navigation should resolve both branches from the common parent");
 
         versions.promote(repaint);
         require(versions.promoted_audio_for(original) == repaint,
@@ -102,10 +125,16 @@ int main() {
         require(versions.promoted_audio_for(repaint) == variation,
                 "rollback promotion did not move HEAD to parent");
 
+        versions.promote(sibling);
+        require(versions.promoted_audio_for(variation) == sibling,
+                "HEAD should resolve across sibling branches in one root lineage");
+
         require(fs::exists(etherbeat::EtherVersions::sidecar_path(original)),
                 "root sidecar missing");
         require(fs::exists(etherbeat::EtherVersions::sidecar_path(variation)),
                 "variation sidecar missing");
+        require(fs::exists(etherbeat::EtherVersions::sidecar_path(sibling)),
+                "sibling sidecar missing");
         require(fs::exists(etherbeat::EtherVersions::sidecar_path(repaint)),
                 "repaint sidecar missing");
 

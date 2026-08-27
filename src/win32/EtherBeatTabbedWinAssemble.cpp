@@ -3,13 +3,11 @@
 
 #include <chrono>
 
-// V0.2R is additive: keep the proven V0.2Q arrangement workspace intact and
-// wrap it with one physical render action that turns the graph into a WAV.
-#define arrangementWindowProc etherbeat_arrangement_legacy_proc
-#define wWinMain etherbeat_arrangement_legacy_main
+// V0.2R is additive: embed the proven V0.2Q arrangement workspace without
+// its entry point, then add physical arrangement rendering above it.
+#define ETHERBEAT_ARRANGEMENT_EMBEDDED
 #include "EtherBeatTabbedWinArrangement.cpp"
-#undef wWinMain
-#undef arrangementWindowProc
+#undef ETHERBEAT_ARRANGEMENT_EMBEDDED
 
 namespace {
 
@@ -87,9 +85,7 @@ void startAssemble() {
             const auto rendered = assembler.render(
                 plan,
                 output,
-                [](const fs::path& path) {
-                    return etherbeat::decode_audio_pcm_file(path);
-                },
+                [](const fs::path& path) { return etherbeat::decode_audio_pcm_file(path); },
                 [&](const etherbeat::ArrangementSlot& slot, double expected_duration)
                     -> std::optional<etherbeat::PcmAudio> {
                     etherbeat::GenerationRequest request;
@@ -102,10 +98,9 @@ void startAssemble() {
                         ? "Generate one alternate " + slot.label + " section for song assembly."
                         : slot.instruction;
                     request.prompt += " Render only this section as self-contained instrumental material."
-                        " It will be inserted into an existing song; avoid intro/outro padding.";
+                                      " It will be inserted into an existing song; avoid intro/outro padding.";
                     if (!producer_context.empty()) request.prompt += " Producer direction: " + producer_context;
                     request.prompt += " Arrangement blueprint: " + blueprint;
-
                     const auto artifact = router.generate(request, fragment_root);
                     return etherbeat::decode_audio_pcm_file(artifact.audio_path);
                 },
@@ -173,7 +168,7 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             startAssemble();
             return 0;
         }
-        return etherbeat_arrangement_legacy_proc(hwnd, msg, wParam, lParam);
+        return arrangementWindowProc(hwnd, msg, wParam, lParam);
     }
     case WM_APP_ASSEMBLE_DONE: {
         bool success = false;
@@ -194,7 +189,8 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             refreshLibrary();
             loadNowPlaying(artifact, true);
             setStatus(L"ETHERASSEMBLE // COMPLETE // " + std::to_wstring(slots) +
-                      L" slots // " + std::to_wstring(static_cast<int>(analysis.duration_seconds)) + L" sec // new version child");
+                      L" slots // " + std::to_wstring(static_cast<int>(analysis.duration_seconds)) +
+                      L" sec // new version child");
         } else {
             setStatus(L"ETHERASSEMBLE // FAILED // " + error);
         }
@@ -202,24 +198,22 @@ LRESULT CALLBACK assembleWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
     }
     case WM_PAINT: {
-        const LRESULT result = etherbeat_arrangement_legacy_proc(hwnd, msg, wParam, lParam);
+        const LRESULT result = arrangementWindowProc(hwnd, msg, wParam, lParam);
         drawAssembleOverlay(hwnd);
         return result;
     }
     default:
         break;
     }
-    return etherbeat_arrangement_legacy_proc(hwnd, msg, wParam, lParam);
+    return arrangementWindowProc(hwnd, msg, wParam, lParam);
 }
 
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     g_instance = instance;
-
     GdiplusStartupInput input;
     if (GdiplusStartup(&g_gdiplus, &input, nullptr) != Ok) return 1;
-
     g_uiFont = CreateFontW(-16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE,
                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
@@ -242,7 +236,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 1040,
         nullptr, nullptr, instance, nullptr);
     if (!hwnd) return 1;
-
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, kImmersiveDarkModeAttribute, &dark, sizeof(dark));
     ShowWindow(hwnd, showCommand);
@@ -253,7 +246,6 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         TranslateMessage(&message);
         DispatchMessageW(&message);
     }
-
     if (g_editBrush) DeleteObject(g_editBrush);
     if (g_uiFont) DeleteObject(g_uiFont);
     if (g_promptFont) DeleteObject(g_promptFont);

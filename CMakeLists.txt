@@ -48,9 +48,17 @@ if(ETHERBEAT_BUILD_CLI)
 endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
-    add_executable(EtherBeat WIN32 src/win32/EtherBeatWin.cpp)
+    add_executable(EtherBeat WIN32
+        src/win32/EtherBeatWin.cpp
+        src/win32/AudioAnalysisWin.cpp
+    )
+    target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(EtherBeat PRIVATE
         etherbeat_core
+        ole32
+        mfplat
+        mfreadwrite
+        mfuuid
         comdlg32
         shell32
         gdiplus

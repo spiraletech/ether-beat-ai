@@ -1,5 +1,6 @@
 #include "etherbeat/ModelRouter.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
+#include "etherbeat/EtherComposer.hpp"
 #ifdef _WIN32
 #include "etherbeat/ManagedAceStepBackend.hpp"
 #endif
@@ -30,7 +31,12 @@ GenerationArtifact ModelRouter::generate(
         throw std::invalid_argument("Duration must be greater than 0 and no more than 600 seconds");
     }
 
-    return backend_->generate(request, output_directory);
+    // EtherComposer is renderer-agnostic. Every backend receives the same
+    // explicit musical blueprint instead of raw free-form text alone.
+    EtherComposer composer;
+    const CompositionPlan plan = composer.compose(request);
+    const GenerationRequest compiled = composer.compile(request, plan);
+    return backend_->generate(compiled, output_directory);
 }
 
 std::unique_ptr<IModelBackend> make_default_backend() {

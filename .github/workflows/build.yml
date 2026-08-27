@@ -38,6 +38,6 @@ jobs:
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ETHERBEAT-Windows-x64-V0.2B
+          name: ETHERBEAT-Windows-x64-V0.2C
           path: package/
           if-no-files-found: error

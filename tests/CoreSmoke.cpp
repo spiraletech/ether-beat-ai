@@ -1,5 +1,6 @@
 #include "etherbeat/EtherComposer.hpp"
 #include "etherbeat/EtherDNA.hpp"
+#include "etherbeat/EtherDraft.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/IModelBackend.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
@@ -11,6 +12,7 @@
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 
@@ -43,6 +45,13 @@ etherbeat::ProviderCapabilities caps(
     auto value = etherbeat::capability(mode) | role;
     if (reference) value = value | etherbeat::ProviderCapability::ReferenceAudio;
     return value;
+}
+
+std::string read_text(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(
+        std::istreambuf_iterator<char>{in},
+        std::istreambuf_iterator<char>{});
 }
 
 } // namespace
@@ -105,6 +114,57 @@ int main() {
         }
         if (!vocalRejected) {
             std::cerr << "Unsupported Vocal routing silently fell back to the wrong provider\n";
+            return 1;
+        }
+
+        // EtherDraft must create a deterministic, lineage-preserving candidate set.
+        etherbeat::ModelRouter draftRouter{std::make_unique<etherbeat::MockWaveBackend>()};
+        etherbeat::GenerationRequest draftRequest;
+        draftRequest.prompt = "haunted draft batch";
+        draftRequest.duration_seconds = 0.05;
+        draftRequest.seed = 1444;
+        draftRequest.bpm = 68.0;
+        draftRequest.key = "F# minor";
+
+        etherbeat::EtherDraft draftEngine;
+        const auto batch = draftEngine.generate(
+            draftRouter,
+            draftRequest,
+            output,
+            etherbeat::DraftOptions{.candidate_count = 4, .continue_after_failure = true});
+
+        if (batch.base_seed != 1444u || batch.candidates.size() != 4 ||
+            batch.success_count() != 4 || !batch.has_success() ||
+            !std::filesystem::exists(batch.manifest_path)) {
+            std::cerr << "EtherDraft did not produce the requested candidate batch\n";
+            return 1;
+        }
+
+        std::set<std::uint64_t> draftSeeds;
+        for (const auto& candidate : batch.candidates) {
+            if (!candidate.success || candidate.seed == 0 ||
+                !std::filesystem::exists(candidate.artifact.audio_path) ||
+                !std::filesystem::exists(candidate.artifact.metadata_path)) {
+                std::cerr << "EtherDraft candidate artifact is incomplete\n";
+                return 1;
+            }
+            draftSeeds.insert(candidate.seed);
+            const auto metadata = read_text(candidate.artifact.metadata_path);
+            if (metadata.find("\"render_intent\": \"draft\"") == std::string::npos) {
+                std::cerr << "EtherDraft candidate lost Draft provider lineage\n";
+                return 1;
+            }
+        }
+        if (draftSeeds.size() != 4 || batch.candidates.front().seed != 1444u) {
+            std::cerr << "EtherDraft candidate seeds are not stable and distinct\n";
+            return 1;
+        }
+
+        const auto draftManifest = read_text(batch.manifest_path);
+        if (draftManifest.find("\"schema\": \"etherbeat.draft.v1\"") == std::string::npos ||
+            draftManifest.find("\"success_count\": 4") == std::string::npos ||
+            draftManifest.find("haunted draft batch") == std::string::npos) {
+            std::cerr << "EtherDraft manifest is missing batch lineage\n";
             return 1;
         }
 
@@ -194,14 +254,7 @@ int main() {
             return 1;
         }
 
-        std::string text;
-        {
-            std::ifstream metadata{artifact.metadata_path};
-            text.assign(
-                std::istreambuf_iterator<char>{metadata},
-                std::istreambuf_iterator<char>{});
-        }
-
+        const auto text = read_text(artifact.metadata_path);
         if (text.find("etherbeat smoke test") == std::string::npos ||
             text.find("Composition blueprint") == std::string::npos ||
             text.find("\"render_intent\": \"quality\"") == std::string::npos ||

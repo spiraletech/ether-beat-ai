@@ -1,6 +1,7 @@
 #include "etherbeat/EtherSearch.hpp"
 
 #include "etherbeat/EtherDNA.hpp"
+#include "etherbeat/EtherPromote.hpp"
 #include "etherbeat/ModelRouter.hpp"
 
 #include <filesystem>
@@ -45,6 +46,18 @@ void write_manifest(SearchReport& report) {
         << "  \"candidate_count\": " << report.candidates.size() << ",\n"
         << "  \"analyzed_count\": " << report.analyzed_count << ",\n"
         << "  \"dna_count\": " << report.dna_count << ",\n"
+        << "  \"draft_winner_candidate_index\": ";
+
+    if (report.draft_winner_candidate_index) out << *report.draft_winner_candidate_index;
+    else out << "null";
+
+    out << ",\n"
+        << "  \"draft_winner_seed\": " << report.draft_winner_seed << ",\n"
+        << "  \"draft_winner_audio_path\": \"" << json_escape(path_utf8(report.draft_winner_audio_path)) << "\",\n"
+        << "  \"quality_promoted\": " << (report.quality_promoted ? "true" : "false") << ",\n"
+        << "  \"promotion_manifest\": \"" << json_escape(path_utf8(report.promotion_manifest_path)) << "\",\n"
+        << "  \"quality_preservation_score\": " << report.quality_preservation_score << ",\n"
+        << "  \"promotion_error\": \"" << json_escape(report.promotion_error) << "\",\n"
         << "  \"winner_candidate_index\": ";
 
     if (report.winner_candidate_index) out << *report.winner_candidate_index;
@@ -147,9 +160,33 @@ SearchReport EtherSearch::run(
         options.critic);
 
     if (report.critic_report.has_winner()) {
-        report.winner_candidate_index = report.critic_report.winner_candidate_index;
-        report.winner_audio_path = report.critic_report.winner_audio_path;
-        report.winner_seed = report.critic_report.winner_seed;
+        report.draft_winner_candidate_index = report.critic_report.winner_candidate_index;
+        report.draft_winner_audio_path = report.critic_report.winner_audio_path;
+        report.draft_winner_seed = report.critic_report.winner_seed;
+
+        report.winner_candidate_index = report.draft_winner_candidate_index;
+        report.winner_audio_path = report.draft_winner_audio_path;
+        report.winner_seed = report.draft_winner_seed;
+
+        if (options.promote_quality) {
+            EtherPromote promoter;
+            const auto promotion = promoter.run(
+                router,
+                report,
+                request,
+                output_directory,
+                analyzer);
+
+            report.promotion_manifest_path = promotion.manifest_path;
+            report.quality_preservation_score = promotion.dna_preservation_score;
+            report.promotion_error = promotion.error;
+
+            if (promotion.succeeded()) {
+                report.quality_promoted = true;
+                report.winner_audio_path = promotion.quality_artifact.audio_path;
+                report.winner_seed = promotion.quality_artifact.resolved_seed;
+            }
+        }
     }
 
     write_manifest(report);

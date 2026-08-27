@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.18
+    VERSION 0.2.19
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -27,6 +27,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherArrangement.cpp
     src/core/EtherAssemble.cpp
     src/core/EtherSeam.cpp
+    src/core/EngineProvisioning.cpp
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
@@ -151,13 +152,17 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_seam_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_seam_smoke COMMAND etherbeat_seam_smoke)
 
+    add_executable(etherbeat_engine_provisioning_smoke tests/EngineProvisioningSmoke.cpp)
+    target_link_libraries(etherbeat_engine_provisioning_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_engine_provisioning_smoke COMMAND etherbeat_engine_provisioning_smoke)
+
     if(MSVC)
         foreach(test_target IN ITEMS
             etherbeat_core_smoke etherbeat_search_smoke etherbeat_auto_promote_smoke
             etherbeat_control_smoke etherbeat_ace_control_smoke etherbeat_control_ui_smoke
             etherbeat_versions_smoke etherbeat_compare_smoke etherbeat_timeline_smoke
             etherbeat_sections_smoke etherbeat_arrangement_smoke etherbeat_assemble_smoke
-            etherbeat_seam_smoke)
+            etherbeat_seam_smoke etherbeat_engine_provisioning_smoke)
             target_compile_options(${test_target} PRIVATE /W4 /permissive- /utf-8)
         endforeach()
     else()
@@ -166,7 +171,7 @@ if(BUILD_TESTING)
             etherbeat_control_smoke etherbeat_ace_control_smoke etherbeat_control_ui_smoke
             etherbeat_versions_smoke etherbeat_compare_smoke etherbeat_timeline_smoke
             etherbeat_sections_smoke etherbeat_arrangement_smoke etherbeat_assemble_smoke
-            etherbeat_seam_smoke)
+            etherbeat_seam_smoke etherbeat_engine_provisioning_smoke)
             target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
         endforeach()
     endif()

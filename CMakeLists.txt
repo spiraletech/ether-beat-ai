@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.5
+    VERSION 0.2.6
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -21,6 +21,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
+    src/core/EtherSearch.cpp
     src/backends/MockWaveBackend.cpp
 )
 
@@ -91,9 +92,15 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_core_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_core_smoke COMMAND etherbeat_core_smoke)
 
+    add_executable(etherbeat_search_smoke tests/SearchSmoke.cpp)
+    target_link_libraries(etherbeat_search_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_search_smoke COMMAND etherbeat_search_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

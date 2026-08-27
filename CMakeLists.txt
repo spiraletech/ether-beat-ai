@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.11
+    VERSION 0.2.12
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -88,7 +88,13 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     set_target_properties(EtherBeat PROPERTIES OUTPUT_NAME "ETHERBEAT")
 
     if(MSVC)
-        target_compile_options(EtherBeat PRIVATE /W4 /permissive- /utf-8 /FIwindowsx.h)
+        target_compile_options(EtherBeat PRIVATE
+            /W4
+            /permissive-
+            /utf-8
+            /FIwindowsx.h
+            /FI${CMAKE_CURRENT_SOURCE_DIR}/src/win32/WinShellPreamble.hpp
+        )
     endif()
 endif()
 

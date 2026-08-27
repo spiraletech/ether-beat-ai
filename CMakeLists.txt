@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.13
+    VERSION 0.2.14
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -22,6 +22,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherControlUi.cpp
     src/core/EtherVersions.cpp
     src/core/EtherCompare.cpp
+    src/core/EtherTimeline.cpp
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
@@ -69,7 +70,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWinCompare.cpp
+        src/win32/EtherBeatTabbedWinTimeline.cpp
         src/win32/AudioAnalysisWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -132,6 +133,10 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_compare_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_compare_smoke COMMAND etherbeat_compare_smoke)
 
+    add_executable(etherbeat_timeline_smoke tests/TimelineSmoke.cpp)
+    target_link_libraries(etherbeat_timeline_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_timeline_smoke COMMAND etherbeat_timeline_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
@@ -141,6 +146,7 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_control_ui_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_versions_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_compare_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_timeline_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
@@ -150,5 +156,6 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_control_ui_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_versions_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_compare_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_timeline_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

@@ -1,6 +1,7 @@
 #include "etherbeat/ModelRouter.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/EtherComposer.hpp"
+#include "etherbeat/EtherControl.hpp"
 #ifdef _WIN32
 #include "etherbeat/ManagedAceStepBackend.hpp"
 #endif
@@ -19,6 +20,7 @@ ProviderCapability mode_capability(GenerationMode mode) {
     case GenerationMode::Variation: return ProviderCapability::Variation;
     case GenerationMode::Extend: return ProviderCapability::Extend;
     case GenerationMode::AudioToAudio: return ProviderCapability::AudioToAudio;
+    case GenerationMode::ReplaceSection: return ProviderCapability::ReplaceSection;
     }
     return ProviderCapability::None;
 }
@@ -34,6 +36,10 @@ ProviderCapability role_capability(RenderIntent intent) {
     return ProviderCapability::None;
 }
 
+bool is_control_mode(GenerationMode mode) {
+    return mode != GenerationMode::TextToInstrumental;
+}
+
 RenderIntent resolve_intent(const GenerationRequest& request) {
     if (request.render_intent != RenderIntent::Auto) return request.render_intent;
 
@@ -43,6 +49,7 @@ RenderIntent resolve_intent(const GenerationRequest& request) {
     case GenerationMode::Variation:
     case GenerationMode::Extend:
     case GenerationMode::AudioToAudio:
+    case GenerationMode::ReplaceSection:
         return RenderIntent::Control;
     }
     return RenderIntent::Quality;
@@ -54,8 +61,32 @@ std::string mode_name(GenerationMode mode) {
     case GenerationMode::Variation: return "variation";
     case GenerationMode::Extend: return "extend";
     case GenerationMode::AudioToAudio: return "audio-to-audio";
+    case GenerationMode::ReplaceSection: return "replace-section";
     }
     return "unknown";
+}
+
+bool needs_temporal_control(const GenerationRequest& request) {
+    return request.mode == GenerationMode::ReplaceSection ||
+        request.control.edit_start_seconds >= 0.0 ||
+        request.control.edit_end_seconds >= 0.0;
+}
+
+bool provider_supports_control_details(
+    ProviderCapabilities caps,
+    const GenerationRequest& request) {
+
+    if (request.control.locks != 0 &&
+        !has_capability(caps, ProviderCapability::ComponentLocks)) return false;
+    if (!request.control.drum_reference.empty() &&
+        !has_capability(caps, ProviderCapability::DrumConditioning)) return false;
+    if (!request.control.melody_reference.empty() &&
+        !has_capability(caps, ProviderCapability::MelodyConditioning)) return false;
+    if (!request.control.chord_progression.empty() &&
+        !has_capability(caps, ProviderCapability::HarmonyConditioning)) return false;
+    if (needs_temporal_control(request) &&
+        !has_capability(caps, ProviderCapability::TemporalControl)) return false;
+    return true;
 }
 
 } // namespace
@@ -109,6 +140,7 @@ const ModelRouter::ProviderSlot& ModelRouter::select_provider(
         if (!has_capability(caps, required_mode)) continue;
         if (required_role != ProviderCapability::None && !has_capability(caps, required_role)) continue;
         if (needs_reference && !has_capability(caps, ProviderCapability::ReferenceAudio)) continue;
+        if (!provider_supports_control_details(caps, request)) continue;
 
         int score = slot.priority;
         if (has_capability(caps, required_role)) score += 1000;
@@ -126,6 +158,11 @@ const ModelRouter::ProviderSlot& ModelRouter::select_provider(
         error << "No EtherBeat provider supports " << mode_name(request.mode)
               << " as a " << render_intent_name(resolved_intent) << " job";
         if (needs_reference) error << " with reference audio";
+        if (request.control.locks != 0) error << " and component locks";
+        if (!request.control.drum_reference.empty()) error << " and drum conditioning";
+        if (!request.control.melody_reference.empty()) error << " and melody conditioning";
+        if (!request.control.chord_progression.empty()) error << " and harmony conditioning";
+        if (needs_temporal_control(request)) error << " and temporal control";
         error << ". Install/register a capable provider instead of silently falling back to the wrong model.";
         throw std::runtime_error(error.str());
     }
@@ -134,8 +171,13 @@ const ModelRouter::ProviderSlot& ModelRouter::select_provider(
 }
 
 RouteDecision ModelRouter::route(const GenerationRequest& request) const {
-    const RenderIntent resolved = resolve_intent(request);
-    const auto& slot = select_provider(request, resolved);
+    GenerationRequest normalized = request;
+    if (is_control_mode(request.mode)) {
+        normalized = EtherControl{}.compile(request).request;
+    }
+
+    const RenderIntent resolved = resolve_intent(normalized);
+    const auto& slot = select_provider(normalized, resolved);
     return RouteDecision{
         .provider_name = std::string{slot.backend->name()},
         .requested_intent = request.render_intent,
@@ -153,18 +195,19 @@ GenerationArtifact ModelRouter::generate(
         throw std::invalid_argument("Duration must be greater than 0 and no more than 600 seconds");
     }
 
-    if (request.mode != GenerationMode::TextToInstrumental && request.reference_audio.empty()) {
-        throw std::invalid_argument("Variation, Extend and Audio-to-Audio jobs require reference audio");
+    GenerationRequest normalized = request;
+    if (is_control_mode(request.mode)) {
+        normalized = EtherControl{}.compile(request).request;
     }
 
-    const RenderIntent resolved = resolve_intent(request);
-    const auto& slot = select_provider(request, resolved);
+    const RenderIntent resolved = resolve_intent(normalized);
+    const auto& slot = select_provider(normalized, resolved);
 
     // Composer remains provider-agnostic: choose the correct renderer first,
     // then compile the same structured blueprint for that provider.
     EtherComposer composer;
-    const CompositionPlan plan = composer.compose(request);
-    GenerationRequest compiled = composer.compile(request, plan);
+    const CompositionPlan plan = composer.compose(normalized);
+    GenerationRequest compiled = composer.compile(normalized, plan);
     compiled.render_intent = resolved;
 
     return slot.backend->generate(compiled, output_directory);

@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2O
+ETHERBEAT // ALIEN WORKSHOP V0.2P
 
 UI ANCHOR
 ---------
@@ -6,84 +6,89 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2O evolves the V0.2N NOW PLAYING workspace instead of redesigning the shell. Search, EtherControl, EtherVersions and EtherCompare stay intact; EtherTimeline adds visual region selection for source-audio repaint.
+V0.2P evolves the V0.2O NOW PLAYING timeline instead of redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare and EtherTimeline remain intact; EtherSections adds reusable musical-region semantics above the real audio timeline.
 
-NEW IN V0.2O // ETHERTIMELINE V0.1
+NEW IN V0.2P // ETHERSECTIONS V0.1
 ----------------------------------
-NOW PLAYING adds a real audio-derived timeline strip inside the analyzer workspace.
+Every analyzed track can now receive a persistent five-region structural map:
 
-The timeline displays:
-- a normalized 128-bin time-energy envelope
-- the current repaint selection
-- start/end time labels
-- the current playback position
-- explicit A-source status while EtherCompare B is being auditioned
+  INTRO | VERSE | HOOK | BRIDGE | OUTRO
 
-The envelope is not decorative. Media Foundation collects per-window RMS energy during the existing 1024-sample FFT/decode pass, then compresses those measurements into 128 left-to-right bins. No second audio decode is required.
+The map stores start/end time and confidence for each region and persists beside the source audio as:
 
-DRAG TO SELECT
---------------
-Drag directly across the EtherTimeline waveform to select the source region that Replace Section should repaint.
+  <audio>.ethersections.json
+
+DETECTION MODEL
+---------------
+V0.1 is deterministic and intentionally inspectable. It is not a learned verse/hook classifier.
+
+EtherSections starts from a five-part structural prior, then uses the real 128-bin EtherTimeline energy envelope to search near expected transitions for local energy valleys. Those valleys nudge the section boundaries toward measurable audio transitions while maintaining ordered, non-overlapping regions that cover the complete track.
+
+The public API is provider-independent so a learned section detector can replace this heuristic later without changing the UI or EtherControl contract.
+
+VISIBLE SECTION RAIL
+--------------------
+NOW PLAYING adds direct section targets above the existing timeline:
+
+  [INTRO] [VERSE] [HOOK] [BRIDGE] [OUTRO] [SNAP]
+
+Clicking a named section immediately writes that section's exact start/end range into the existing EtherControl repaint window.
 
 Example:
 
-  [---- waveform ----[ SELECTED ]---- waveform ----]
-                       0:08.20 -> 0:16.75
+  HOOK = 31.20 -> 54.80
+       -> click HOOK
+       -> START = 31.20
+       -> END   = 54.80
+       -> producer instruction
+       -> REPLACE SECTION
+       -> ACE repaint
+       -> new EtherVersions child
 
-The selection immediately updates the existing START and END precision fields in EtherControl.
-Pressing REPLACE SECTION therefore uses the same typed GenerationRequest / ACE repaint path that V0.2K+ already validated.
+No section action changes version HEAD or the selected A-source lineage.
 
-The numeric START / END boxes remain available for exact manual adjustment.
+SNAP MODE
+---------
+SNAP is optional.
 
-SELECTION SEMANTICS
--------------------
-EtherTimeline V0.1 owns selection math outside Win32.
+SNAP OFF:
+  free-drag the real EtherTimeline waveform and keep the exact region selected.
 
-It provides:
-- normalized drag -> seconds conversion
-- reversed-drag handling
-- duration clamping
-- out-of-range clamping
-- minimum 0.25-second edit region
-- normalized playhead conversion
+SNAP ON:
+  free-drag the waveform; when released, EtherSections snaps the selection to the nearest detected musical section.
 
-This keeps timeline semantics reusable when EtherBeat eventually replaces MCI/Win32 playback.
+The numeric START/END fields remain available as the precision fallback in either mode.
 
-COMPARE SAFETY
---------------
-EtherCompare keeps A as the selected EtherVersions node and B as the audition-only alternate.
+TIMELINE VISUALIZATION
+----------------------
+EtherSections draws structural boundary markers over the existing real 128-bin waveform envelope. EtherTimeline still owns waveform rendering, live playhead, drag selection and A/B source safety.
 
-The timeline always edits A.
-If B is currently being auditioned, the timeline explicitly reports:
+If EtherCompare B is being auditioned, the selected/edit source remains A exactly as in V0.2O.
 
-  B AUDITIONING, EDIT SOURCE REMAINS A
+PERSISTENCE
+-----------
+Section maps are stored locally beside analyzed audio:
 
-Dragging the timeline while listening to B never silently changes the repaint source to B.
+  song.wav
+  song.wav.etherdna.json
+  song.wav.etherversion.json
+  song.wav.ethersections.json
 
-REAL PLAYHEAD
--------------
-The timeline polls the existing MCI playback position and draws a live playhead across the selected A-source timeline.
-A lightweight UI timer invalidates only the timeline region while NOW PLAYING is active.
+Loading the track later can reuse the saved section map rather than inferring it again.
 
-ANALYSIS ENVELOPE
------------------
-AudioAnalysis now includes:
-
-  timeline_envelope[128]
-
-The Windows Media Foundation analyzer records each FFT window's RMS energy and builds a normalized envelope from average + local peak energy. Existing EtherDNA spectrum and critic measurements remain unchanged.
-
-UI ARCHITECTURE
----------------
-V0.2O deliberately wraps the proven V0.2N shell instead of copying/replacing all of it.
-
-  V0.2N Compare shell
-        +
-  EtherTimeline paint/input wrapper
-        =
-  V0.2O
-
-This preserves the previous shell as a clean rollback point and makes timeline behavior additive.
+CORE API
+--------
+EtherSections V0.1 adds:
+- SectionKind
+- SongSection
+- SectionMap
+- infer_sections(...)
+- find_section(...)
+- section_selection(...)
+- snap_selection_to_section(...)
+- save_section_map(...)
+- load_section_map(...)
+- load_section_map_for_audio(...)
 
 CURRENT PRODUCER FLOW
 ---------------------
@@ -95,10 +100,11 @@ CREATE:
       -> EtherPromote
       -> NOW PLAYING
 
-CONTROL / TIMELINE:
-  NOW PLAYING A source
-      -> drag EtherTimeline region
-      -> START / END update
+TIMELINE / SECTIONS:
+  real 128-bin timeline
+      -> free region OR named INTRO/VERSE/HOOK/BRIDGE/OUTRO
+      -> optional SNAP
+      -> START / END
       -> producer instruction
       -> REPLACE SECTION
       -> ModelRouter
@@ -106,22 +112,16 @@ CONTROL / TIMELINE:
       -> EtherVersions child
       -> EtherCompare A/B
 
-VERSION + COMPARE:
-  PARENT / CHILD / HEAD / PROMOTE
-      +
-  synchronized A/B audition
-      +
-  EtherDNA difference readout
-
 TEST COVERAGE
 -------------
-V0.2O adds EtherTimeline smoke coverage for:
-- normal drag mapping
-- reversed drag mapping
-- normalized clamping
-- minimum-width expansion
-- duration-edge selection
-- normalized playhead position
+V0.2P adds EtherSections coverage for:
+- five-section inference
+- complete-song coverage
+- ordered/non-overlapping section continuity
+- HOOK lookup
+- named-section selection
+- free-selection -> section snapping
+- JSON persistence round trip
 
 All previous suites remain active:
 - Core
@@ -133,9 +133,10 @@ All previous suites remain active:
 - EtherVersions
 - EtherCompare
 - EtherTimeline
+- EtherSections
 
-Windows/MSVC compiles the native timeline wrapper plus the real Media Foundation envelope path.
-Ubuntu/GCC validates portable timeline selection semantics and the rest of the core stack.
+Windows/MSVC compiles the full Sections -> Timeline -> Compare native shell stack.
+Ubuntu/GCC validates the portable section model and the complete core suite.
 
 CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners.
 
@@ -153,6 +154,9 @@ Control audio:
 EtherDNA sidecars:
   beside analyzed audio as *.etherdna.json
 
+EtherSections sidecars:
+  beside analyzed audio as *.ethersections.json
+
 Version sidecars:
   beside tracked audio as *.etherversion.json
 
@@ -161,9 +165,11 @@ Version HEAD records:
 
 CURRENT LIMITS
 --------------
-- EtherTimeline V0.1 visualizes a real time-energy envelope, not full sample-resolution waveform peaks yet.
-- Timeline playback/seek still uses MCI millisecond positioning; sample-accurate playback comes later with the EtherPlay playback engine.
-- Region selection currently drives Replace Section; Extend remains intentionally blocked until continuation behavior is separately validated.
+- V0.1 section naming uses a structural prior + energy-transition heuristic, not a trained semantic structure model yet.
+- Section maps currently use one INTRO / VERSE / HOOK / BRIDGE / OUTRO pass; repeated hooks/verses and arbitrary custom labels come later.
+- EtherTimeline remains a 128-bin time-energy envelope rather than sample-resolution waveform peaks.
+- Playback/seek still uses MCI millisecond positioning; sample-accurate playback comes later with the EtherPlay playback engine.
+- Extend remains intentionally blocked until continuation behavior is separately validated.
 - ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
 - EtherCritic remains DSP-derived; learned semantic/taste heads come later.

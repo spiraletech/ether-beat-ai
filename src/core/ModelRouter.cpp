@@ -1,5 +1,8 @@
 #include "etherbeat/ModelRouter.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
+#ifdef _WIN32
+#include "etherbeat/AceStepApiBackend.hpp"
+#endif
 
 #include <stdexcept>
 #include <utility>
@@ -31,7 +34,11 @@ GenerationArtifact ModelRouter::generate(
 }
 
 std::unique_ptr<IModelBackend> make_default_backend() {
+#ifdef _WIN32
+    return make_ace_step_backend();
+#else
     return std::make_unique<MockWaveBackend>();
+#endif
 }
 
 } // namespace etherbeat

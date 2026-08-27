@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.8
+    VERSION 0.2.9
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -24,6 +24,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherCritic.cpp
     src/core/EtherSearch.cpp
     src/core/EtherPromote.cpp
+    src/core/AceStepRequestCodec.cpp
     src/backends/MockWaveBackend.cpp
 )
 
@@ -106,15 +107,21 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_control_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_control_smoke COMMAND etherbeat_control_smoke)
 
+    add_executable(etherbeat_ace_control_smoke tests/AceControlSmoke.cpp)
+    target_link_libraries(etherbeat_ace_control_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_ace_control_smoke COMMAND etherbeat_ace_control_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_auto_promote_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_control_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_ace_control_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_auto_promote_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_ace_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

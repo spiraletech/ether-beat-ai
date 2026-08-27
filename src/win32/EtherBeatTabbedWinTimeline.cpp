@@ -219,6 +219,7 @@ LRESULT CALLBACK timelineWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
 } // namespace
 
+#ifndef ETHERBEAT_TIMELINE_EMBEDDED
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     g_instance = instance;
 
@@ -265,3 +266,4 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     GdiplusShutdown(g_gdiplus);
     return static_cast<int>(message.wParam);
 }
+#endif

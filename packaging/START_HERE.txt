@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2K
+ETHERBEAT // ALIEN WORKSHOP V0.2L
 
 UI ANCHOR
 ---------
@@ -6,145 +6,129 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2K does not redesign the shell. It turns NOW PLAYING into a producer workspace by exposing the live source-audio control capabilities added in V0.2J.
+V0.2L is an engine-structure release. It adds persistent music version lineage underneath the existing V0.2K producer workspace rather than redesigning the shell.
 
-NEW IN V0.2K // ETHERCONTROL UI V0.1
-------------------------------------
-NOW PLAYING now uses a split workspace:
+NEW IN V0.2L // ETHERVERSIONS V0.1
+----------------------------------
+EtherBeat now treats generated edits as a version graph instead of unrelated files.
 
-  left  = EtherPlay-derived frequency analyzer
-  right = ETHERCONTROL // LIVE
+Each tracked audio node receives:
 
-The Control card exposes:
+  <track>.etherversion.json
+
+The sidecar stores:
+- schema version
+- version id
+- root id
+- parent version id
+- current audio path
+- parent audio path
+- operation type
 - producer instruction
-- reference strength (0..1)
-- repaint start time
-- repaint end time
-- VARIATION
-- REPLACE SECTION
+- creation timestamp
 
-The currently loaded Now Playing track is automatically used as the source audio.
+ROOT / CHILD MODEL
+------------------
+On the first control edit of a track:
 
-LIVE USER FLOW
---------------
-VARIATION:
-  current track
-      -> producer instruction
-      -> reference strength
-      -> EtherControl typed request
-      -> ModelRouter Control role
-      -> managed ACE-Step cover task
-      -> new WAV version
-      -> native audio analysis
+  ORIGINAL
+     -> registered as ROOT
+
+The successful control render becomes a child:
+
+  ORIGINAL
+     -> VARIATION A
+
+Editing that child continues the graph:
+
+  ORIGINAL
+     -> VARIATION A
+          -> REPAINT A1
+
+All nodes in the chain preserve the same root id.
+
+AUTOMATIC ROUTER INTEGRATION
+----------------------------
+Version registration lives at ModelRouter level, not only inside Win32 button code.
+
+Any successful source-conditioned EtherControl render with reference audio automatically registers:
+- the source as a root/version node when needed
+- the output as a child node
+- operation lineage (variation, audio-to-audio, replace-section, etc.)
+- the producer instruction used for the edit
+
+This makes lineage available to future UI, CLI and API callers without duplicating persistence logic.
+
+HEAD / PROMOTION
+----------------
+EtherVersions includes per-root HEAD state under the local library metadata area.
+
+A version can be promoted without deleting siblings or ancestors.
+The engine can resolve the currently promoted audio from any node in the same lineage.
+Moving HEAD to the parent provides rollback semantics while preserving every file.
+
+The V0.2L core API includes:
+- ensure_root(audio)
+- register_child(parent, child, operation, instruction)
+- lineage_for_audio(audio)
+- parent_audio_for(audio)
+- promote(audio)
+- promoted_audio_for(audio)
+
+LINEAGE QUERY
+-------------
+For the currently selected node, EtherVersions can resolve:
+- parent
+- direct children
+- root identity
+- promoted version id
+- whether the current node is HEAD
+
+This is the substrate for the next visible Sessions-style controls: PARENT, PROMOTE, HEAD and branch/version browsing in Now Playing.
+
+CURRENT PRODUCER FLOW
+---------------------
+CREATE:
+  EtherComposer
+      -> EtherSearch x4
+      -> EtherDNA
+      -> EtherCritic
+      -> EtherPromote
       -> NOW PLAYING
 
-REPLACE SECTION:
-  current track
-      -> producer instruction
-      -> validated start/end window
-      -> reference strength
-      -> EtherControl typed request
-      -> ModelRouter Temporal Control
-      -> managed ACE-Step repaint task
-      -> new WAV version
-      -> native audio analysis
+CONTROL:
+  NOW PLAYING
+      -> Variation / Replace Section
+      -> ModelRouter
+      -> ACE cover / repaint
+      -> new local audio
+      -> EtherVersions automatic child registration
       -> NOW PLAYING
 
 ORIGINAL PRESERVATION
 ---------------------
-Control operations never overwrite the loaded source file.
-New control renders are written under:
-
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\<source-stem>\
-
-The Library scan is recursive in V0.2K, so generated control versions remain loadable from the existing Library screen.
-
-TYPED UI BOUNDARY
------------------
-A portable ControlUiRequestFactory now converts GUI state into GenerationRequest objects.
-The Win32 shell does not hand-build ACE JSON.
-
-The factory validates:
-- source track exists logically
-- producer instruction is present
-- reference strength is 0..1
-- Replace Section end is later than start
-- repaint window stays inside the measured source duration
-
-Reference strength also derives a conservative mutation amount for the provider-neutral request.
-
-STATE CLEANUP
--------------
-NOW PLAYING analysis and SONG LAB reference analysis are now separate state objects.
-Analyzing a Song Lab reference no longer overwrites the spectrum/duration state used by Now Playing controls.
-
-LIVE PROVIDER MAPPING
----------------------
-EtherBeat mode            ACE task
-------------------------- ---------
-TextToInstrumental        text2music
-Variation                 cover
-Audio-to-Audio            cover
-Replace Section           repaint
-Extend                    BLOCKED
-
-STRICT CAPABILITY TRUTH
------------------------
-ACE currently supports through EtherBeat:
-- TextToInstrumental
-- Variation
-- AudioToAudio
-- ReferenceAudio
-- ReplaceSection
-- DraftRole
-- QualityRole
-- ControlRole
-- LocalRuntime
-- TemporalControl
-
-ACE still does NOT claim:
-- Extend
-- ComponentLocks
-- isolated DrumConditioning
-- isolated MelodyConditioning
-- symbolic HarmonyConditioning
-
-Unsupported controls remain blocked instead of silently discarded.
-
-CURRENT CREATE PIPELINE
------------------------
-CREATE remains:
-
-  EtherComposer
-      -> EtherSearch x4
-      -> EtherDraft
-      -> native analysis / EtherDNA
-      -> EtherCritic
-      -> EtherPromote
-      -> Quality render
-      -> NOW PLAYING
-
-V0.2K adds the next producer loop after generation:
-
-  NOW PLAYING
-      -> Variation / Replace Section
-      -> new local version
-      -> NOW PLAYING
+Control operations still never overwrite the source audio.
+EtherVersions adds graph metadata on top of the existing local-file preservation model.
 
 TEST COVERAGE
 -------------
-CI verifies:
-- all existing Core/Search/AutoPromote/Control/ACE-Control smoke tests
-- new Control UI request-factory smoke test
-- Variation UI mapping
-- Replace Section UI mapping
-- mutation/reference-strength mapping
-- invalid repaint-window rejection
-- out-of-track repaint rejection
-- Ubuntu/GCC build
-- Windows/MSVC native ETHERBEAT.exe build
+The EtherVersions smoke test verifies:
+- deterministic root creation
+- root sidecar persistence
+- child registration
+- grandchild registration
+- root id continuity
+- parent resolution
+- child discovery
+- promotion / HEAD movement
+- rollback to parent
+- promoted-audio resolution from another node
+- automatic ModelRouter registration after a successful control render
+- source and child sidecars created through the router path
 
-CI does NOT run heavyweight ACE model inference because the local model/runtime weights are not installed on GitHub runners. The provider API mapping and native integration compile/test there; actual model inference happens on the local EtherBeat machine.
+All previous Core/Search/AutoPromote/Control/ACE-Control/Control-UI tests remain in the suite.
+
+CI validates Windows/MSVC and Ubuntu/GCC. It does not run heavyweight ACE inference because local model weights are not installed on GitHub runners.
 
 LOCAL DATA
 ----------
@@ -154,11 +138,18 @@ Runtime:
 Library:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
-Control versions:
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\<source-stem>\
+Control audio:
+  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\...
+
+Version sidecars:
+  beside tracked audio as *.etherversion.json
+
+Version HEAD records:
+  %LOCALAPPDATA%\EtherTech\EtherBeat\library\.etherversions\heads\
 
 CURRENT LIMITS
 --------------
+- V0.2L adds the persistent version engine; dedicated PARENT/PROMOTE/branch buttons are the next UI layer.
 - Extend remains intentionally blocked until continuation behavior is separately validated.
 - ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.

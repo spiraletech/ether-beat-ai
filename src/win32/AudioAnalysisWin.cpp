@@ -1,4 +1,5 @@
 #include "etherbeat/AudioAnalysis.hpp"
+#include "etherbeat/EtherDNA.hpp"
 
 #include <windows.h>
 #include <mfapi.h>
@@ -307,6 +308,10 @@ AudioAnalysis analyze_audio_file(const std::filesystem::path& path) {
     result.duration_seconds = static_cast<double>(pcmFrames) / static_cast<double>(sampleRate);
     result.ready = true;
     result.error.clear();
+
+    const EtherDNA dna = make_ether_dna(path, result);
+    (void)save_ether_dna(dna, ether_dna_sidecar_path(path));
+
     return result;
 }
 

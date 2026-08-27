@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2P
+ETHERBEAT // ALIEN WORKSHOP V0.2Q
 
 UI ANCHOR
 ---------
@@ -6,89 +6,112 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2P evolves the V0.2O NOW PLAYING timeline instead of redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare and EtherTimeline remain intact; EtherSections adds reusable musical-region semantics above the real audio timeline.
+V0.2Q evolves the V0.2P NOW PLAYING section/timeline workspace instead of redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare, EtherTimeline and EtherSections remain intact; EtherArrangement adds a persistent song-structure graph above them.
 
-NEW IN V0.2P // ETHERSECTIONS V0.1
-----------------------------------
-Every analyzed track can now receive a persistent five-region structural map:
+NEW IN V0.2Q // ETHERARRANGEMENT V0.1
+-------------------------------------
+Every analyzed track can now receive a persistent arrangement plan beside the source audio:
 
-  INTRO | VERSE | HOOK | BRIDGE | OUTRO
+  <audio>.etherarrangement.json
 
-The map stores start/end time and confidence for each region and persists beside the source audio as:
+The plan is an ordered graph of arrangement slots. Each slot records:
+- stable slot ID
+- section kind and label
+- provenance: source / duplicate / placeholder
+- source section start/end when reusable audio exists
+- origin slot ID for duplicates
+- generation instruction for placeholders
 
-  <audio>.ethersections.json
+PROVENANCE MODEL
+----------------
+EtherArrangement distinguishes three meanings:
 
-DETECTION MODEL
----------------
-V0.1 is deterministic and intentionally inspectable. It is not a learned verse/hook classifier.
+SOURCE
+  Reuse an existing detected section from the current audio.
 
-EtherSections starts from a five-part structural prior, then uses the real 128-bin EtherTimeline energy envelope to search near expected transitions for local energy valleys. Those valleys nudge the section boundaries toward measurable audio transitions while maintaining ordered, non-overlapping regions that cover the complete track.
+DUPLICATE
+  Repeat/reuse a previous arrangement slot. The duplicate retains source timing and points back to the slot it came from.
 
-The public API is provider-independent so a learned section detector can replace this heuristic later without changing the UI or EtherControl contract.
+PLACEHOLDER
+  A structural section exists in the plan but has no audio yet. A later renderer can synthesize material for that slot.
 
-VISIBLE SECTION RAIL
---------------------
-NOW PLAYING adds direct section targets above the existing timeline:
+This distinction is intentionally renderer-neutral. V0.2Q does not pretend ACE can physically splice and reorder complete audio yet.
 
-  [INTRO] [VERSE] [HOOK] [BRIDGE] [OUTRO] [SNAP]
+VISIBLE ARRANGEMENT RAIL
+------------------------
+NOW PLAYING adds a compact arrangement rail above EtherSections:
 
-Clicking a named section immediately writes that section's exact start/end range into the existing EtherControl repaint window.
+  INTRO > VERSE > HOOK > BRIDGE > OUTRO
+
+with:
+
+  < SLOT | SLOT > | DUP | < MOVE | MOVE > | + ALT | DELETE
+
+< SLOT / SLOT >
+  Select arrangement slots. Selecting a source-backed slot also moves the existing timeline repaint window to that source section.
+
+DUP
+  Inserts a duplicate immediately after the selected slot while preserving its source provenance.
+
+< MOVE / MOVE >
+  Reorders the selected slot in the arrangement plan.
+
++ ALT
+  Inserts a generated placeholder of the selected section kind after it, for example HOOK ALT. The placeholder intentionally has no source timestamps yet.
+
+DELETE
+  Removes the selected slot from the arrangement plan only. The underlying source WAV and EtherVersions graph are unchanged. EtherArrangement refuses to remove the final remaining slot.
+
+REVISION MODEL
+--------------
+Every structural mutation increments an arrangement revision counter.
 
 Example:
 
-  HOOK = 31.20 -> 54.80
-       -> click HOOK
-       -> START = 31.20
-       -> END   = 54.80
-       -> producer instruction
-       -> REPLACE SECTION
-       -> ACE repaint
-       -> new EtherVersions child
+  rev 0: INTRO > VERSE > HOOK > BRIDGE > OUTRO
+  DUP HOOK
+  rev 1: INTRO > VERSE > HOOK > HOOK* > BRIDGE > OUTRO
+  + ALT
+  rev 2: INTRO > VERSE > HOOK > HOOK ALT+ > HOOK* > BRIDGE > OUTRO
+  MOVE >
+  rev 3: ...
 
-No section action changes version HEAD or the selected A-source lineage.
+* indicates a duplicate in the compact UI sequence.
++ indicates a not-yet-rendered placeholder.
 
-SNAP MODE
----------
-SNAP is optional.
+RENDERER-NEUTRAL BLUEPRINT
+--------------------------
+EtherArrangement can compile the current graph into a textual arrangement blueprint with slot order, provenance, source timing, duplicate origins and placeholder instructions.
 
-SNAP OFF:
-  free-drag the real EtherTimeline waveform and keep the exact region selected.
-
-SNAP ON:
-  free-drag the waveform; when released, EtherSections snaps the selection to the nearest detected musical section.
-
-The numeric START/END fields remain available as the precision fallback in either mode.
-
-TIMELINE VISUALIZATION
-----------------------
-EtherSections draws structural boundary markers over the existing real 128-bin waveform envelope. EtherTimeline still owns waveform rendering, live playhead, drag selection and A/B source safety.
-
-If EtherCompare B is being auditioned, the selected/edit source remains A exactly as in V0.2O.
+The blueprint is infrastructure for a future arrangement renderer / Composer pass. V0.2Q persists and edits the graph but does NOT physically assemble a new waveform from the graph yet.
 
 PERSISTENCE
 -----------
-Section maps are stored locally beside analyzed audio:
+A tracked song can now accumulate:
 
   song.wav
   song.wav.etherdna.json
   song.wav.etherversion.json
   song.wav.ethersections.json
+  song.wav.etherarrangement.json
 
-Loading the track later can reuse the saved section map rather than inferring it again.
+Loading the song later restores its arrangement revision rather than rebuilding the plan from scratch.
 
 CORE API
 --------
-EtherSections V0.1 adds:
-- SectionKind
-- SongSection
-- SectionMap
-- infer_sections(...)
-- find_section(...)
-- section_selection(...)
-- snap_selection_to_section(...)
-- save_section_map(...)
-- load_section_map(...)
-- load_section_map_for_audio(...)
+EtherArrangement V0.1 adds:
+- ArrangementOrigin
+- ArrangementSlot
+- ArrangementPlan
+- make_arrangement_plan(...)
+- duplicate_arrangement_slot(...)
+- move_arrangement_slot(...)
+- insert_arrangement_placeholder(...)
+- erase_arrangement_slot(...)
+- arrangement_blueprint(...)
+- save_arrangement_plan(...)
+- load_arrangement_plan(...)
+- load_arrangement_plan_for_audio(...)
 
 CURRENT PRODUCER FLOW
 ---------------------
@@ -100,28 +123,37 @@ CREATE:
       -> EtherPromote
       -> NOW PLAYING
 
-TIMELINE / SECTIONS:
-  real 128-bin timeline
-      -> free region OR named INTRO/VERSE/HOOK/BRIDGE/OUTRO
-      -> optional SNAP
-      -> START / END
+STRUCTURE:
+  EtherTimeline
+      -> EtherSections
+      -> EtherArrangement
+          -> repeat source section
+          -> reorder slot
+          -> insert generated placeholder
+          -> persist revisioned plan
+
+CONTROL:
+  source-backed arrangement slot
+      -> timeline selection
       -> producer instruction
       -> REPLACE SECTION
-      -> ModelRouter
       -> ACE repaint
       -> EtherVersions child
       -> EtherCompare A/B
 
 TEST COVERAGE
 -------------
-V0.2P adds EtherSections coverage for:
-- five-section inference
-- complete-song coverage
-- ordered/non-overlapping section continuity
-- HOOK lookup
-- named-section selection
-- free-selection -> section snapping
+V0.2Q adds EtherArrangement coverage for:
+- SectionMap -> arrangement conversion
+- stable source provenance
+- duplicate provenance and source timing
+- slot reordering
+- placeholder insertion
+- non-destructive deletion
+- revision increments
+- renderer-neutral blueprint generation
 - JSON persistence round trip
+- arrangement sidecar naming
 
 All previous suites remain active:
 - Core
@@ -134,9 +166,10 @@ All previous suites remain active:
 - EtherCompare
 - EtherTimeline
 - EtherSections
+- EtherArrangement
 
-Windows/MSVC compiles the full Sections -> Timeline -> Compare native shell stack.
-Ubuntu/GCC validates the portable section model and the complete core suite.
+Windows/MSVC compiles the full Arrangement -> Sections -> Timeline -> Compare shell stack.
+Ubuntu/GCC validates the portable arrangement graph and complete core suite.
 
 CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners.
 
@@ -148,29 +181,18 @@ Runtime:
 Library:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
-Control audio:
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\...
-
-EtherDNA sidecars:
-  beside analyzed audio as *.etherdna.json
-
-EtherSections sidecars:
-  beside analyzed audio as *.ethersections.json
-
-Version sidecars:
-  beside tracked audio as *.etherversion.json
-
-Version HEAD records:
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\.etherversions\heads\
+EtherArrangement sidecars:
+  beside analyzed audio as *.etherarrangement.json
 
 CURRENT LIMITS
 --------------
-- V0.1 section naming uses a structural prior + energy-transition heuristic, not a trained semantic structure model yet.
-- Section maps currently use one INTRO / VERSE / HOOK / BRIDGE / OUTRO pass; repeated hooks/verses and arbitrary custom labels come later.
+- EtherArrangement V0.1 edits a persistent structure graph; it does not physically concatenate/splice/re-render the graph into a finished waveform yet.
+- Placeholder slots represent material that still needs a future renderer/generation stage.
+- V0.1 section naming still uses a structural prior + energy-transition heuristic, not a trained semantic structure model.
+- Repeated/custom section detection is represented cleanly in EtherArrangement, but EtherSections detection itself still starts from one INTRO / VERSE / HOOK / BRIDGE / OUTRO pass.
 - EtherTimeline remains a 128-bin time-energy envelope rather than sample-resolution waveform peaks.
-- Playback/seek still uses MCI millisecond positioning; sample-accurate playback comes later with the EtherPlay playback engine.
+- Playback/seek still uses MCI millisecond positioning.
 - Extend remains intentionally blocked until continuation behavior is separately validated.
-- ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
 - EtherCritic remains DSP-derived; learned semantic/taste heads come later.
 - Pleiadian taste adaptation is not trained yet.

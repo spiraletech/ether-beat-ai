@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2L
+ETHERBEAT // ALIEN WORKSHOP V0.2M
 
 UI ANCHOR
 ---------
@@ -6,85 +6,93 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2L is an engine-structure release. It adds persistent music version lineage underneath the existing V0.2K producer workspace rather than redesigning the shell.
+V0.2M evolves NOW PLAYING instead of redesigning the product shell. The persistent EtherVersions graph introduced in V0.2L is now visible and driveable as a producer/version workspace.
 
-NEW IN V0.2L // ETHERVERSIONS V0.1
-----------------------------------
-EtherBeat now treats generated edits as a version graph instead of unrelated files.
+NEW IN V0.2M // ETHERVERSIONS WORKSPACE V0.1
+-------------------------------------------
+NOW PLAYING keeps its split analyzer + EtherControl workspace and adds an EtherVersions rail directly beneath it.
 
-Each tracked audio node receives:
+Visible version actions:
+- PARENT
+- < CHILD
+- CHILD >
+- HEAD
+- PROMOTE
 
-  <track>.etherversion.json
+The rail also shows whether the current audio is the promoted HEAD or an unpromoted branch, its operation type, root identity prefix, and branch/child count.
 
-The sidecar stores:
-- schema version
-- version id
-- root id
-- parent version id
-- current audio path
-- parent audio path
+PARENT
+------
+PARENT walks from the current control version to its immediate parent without deleting anything.
+
+Example:
+
+  ORIGINAL
+     -> VARIATION A
+          -> REPAINT A1   [current]
+
+PARENT loads VARIATION A.
+Another PARENT loads ORIGINAL.
+At the root, PARENT is a no-op with an explicit status message.
+
+CHILD / SIBLING A-B NAVIGATION
+------------------------------
+At a root node, CHILD arrows enter the root's direct child branches.
+
+When the current node already has a parent, CHILD arrows operate across that common parent's direct children. This means sibling variations can be A/B-switched without returning to the parent between every listen.
+
+Example:
+
+  ORIGINAL
+     -> VARIATION A
+     -> VARIATION B
+     -> VARIATION C
+
+While listening to VARIATION B:
+
+  < CHILD  -> VARIATION A
+  CHILD >  -> VARIATION C
+
+Branch ordering is deterministic: children are sorted by creation timestamp with version ID as a stable tie break, rather than relying on filesystem enumeration order.
+
+HEAD
+----
+HEAD jumps from any node in a root lineage to the version currently promoted for that lineage.
+
+If the current node already is HEAD, EtherBeat reports that directly instead of reloading it.
+
+PROMOTE
+-------
+PROMOTE moves the lineage HEAD to the currently loaded version.
+No source, sibling, child or ancestor audio is deleted.
+
+This makes approval explicit:
+
+  generate/edit freely
+      -> compare branches
+      -> choose the version you actually want
+      -> PROMOTE
+
+A future render/edit can still branch from any older node afterward.
+
+AUTOMATIC LINEAGE
+-----------------
+Version registration remains in ModelRouter rather than only in Win32 button code.
+
+Any successful source-conditioned EtherControl render automatically registers:
+- source/root lineage when needed
+- child version
 - operation type
+- parent relationship
 - producer instruction
-- creation timestamp
 
-ROOT / CHILD MODEL
-------------------
-On the first control edit of a track:
+The Now Playing workspace simply queries and drives that persistent graph.
 
-  ORIGINAL
-     -> registered as ROOT
-
-The successful control render becomes a child:
-
-  ORIGINAL
-     -> VARIATION A
-
-Editing that child continues the graph:
-
-  ORIGINAL
-     -> VARIATION A
-          -> REPAINT A1
-
-All nodes in the chain preserve the same root id.
-
-AUTOMATIC ROUTER INTEGRATION
-----------------------------
-Version registration lives at ModelRouter level, not only inside Win32 button code.
-
-Any successful source-conditioned EtherControl render with reference audio automatically registers:
-- the source as a root/version node when needed
-- the output as a child node
-- operation lineage (variation, audio-to-audio, replace-section, etc.)
-- the producer instruction used for the edit
-
-This makes lineage available to future UI, CLI and API callers without duplicating persistence logic.
-
-HEAD / PROMOTION
-----------------
-EtherVersions includes per-root HEAD state under the local library metadata area.
-
-A version can be promoted without deleting siblings or ancestors.
-The engine can resolve the currently promoted audio from any node in the same lineage.
-Moving HEAD to the parent provides rollback semantics while preserving every file.
-
-The V0.2L core API includes:
-- ensure_root(audio)
-- register_child(parent, child, operation, instruction)
-- lineage_for_audio(audio)
-- parent_audio_for(audio)
-- promote(audio)
-- promoted_audio_for(audio)
-
-LINEAGE QUERY
+TRACK LOADING
 -------------
-For the currently selected node, EtherVersions can resolve:
-- parent
-- direct children
-- root identity
-- promoted version id
-- whether the current node is HEAD
+Loading a generated/local Library track into NOW PLAYING now initializes EtherVersions root metadata automatically when the track has no prior lineage.
 
-This is the substrate for the next visible Sessions-style controls: PARENT, PROMOTE, HEAD and branch/version browsing in Now Playing.
+Tracked control children retain their existing parent/root metadata; they are not mistakenly re-rooted when loaded later.
 
 CURRENT PRODUCER FLOW
 ---------------------
@@ -94,41 +102,53 @@ CREATE:
       -> EtherDNA
       -> EtherCritic
       -> EtherPromote
-      -> NOW PLAYING
+      -> NOW PLAYING / EtherVersions root
 
 CONTROL:
   NOW PLAYING
       -> Variation / Replace Section
       -> ModelRouter
       -> ACE cover / repaint
-      -> new local audio
-      -> EtherVersions automatic child registration
-      -> NOW PLAYING
+      -> new local child audio
+      -> EtherVersions automatic registration
+      -> NOW PLAYING branch
+
+VERSION WORKSPACE:
+  current branch
+      -> PARENT / CHILD A-B / HEAD
+      -> compare
+      -> PROMOTE selected version
 
 ORIGINAL PRESERVATION
 ---------------------
-Control operations still never overwrite the source audio.
-EtherVersions adds graph metadata on top of the existing local-file preservation model.
+EtherVersions never implements destructive undo.
+Version navigation changes which audio node is loaded; promotion changes only the HEAD metadata record.
+All audio branches remain local until the user deliberately removes files outside this workflow.
 
 TEST COVERAGE
 -------------
-The EtherVersions smoke test verifies:
+EtherVersions tests now verify:
 - deterministic root creation
 - root sidecar persistence
-- child registration
+- multiple sibling child registration
+- deterministic direct-child ordering
 - grandchild registration
-- root id continuity
+- root ID continuity
 - parent resolution
-- child discovery
+- direct-child discovery
+- sibling discovery through the common parent
 - promotion / HEAD movement
 - rollback to parent
-- promoted-audio resolution from another node
+- HEAD movement across sibling branches
+- promoted-audio resolution from another branch
 - automatic ModelRouter registration after a successful control render
 - source and child sidecars created through the router path
 
-All previous Core/Search/AutoPromote/Control/ACE-Control/Control-UI tests remain in the suite.
+All existing Core/Search/AutoPromote/Control/ACE-Control/Control-UI tests remain active.
+The native Windows shell itself compiles under MSVC with the version rail and navigation actions wired.
+Ubuntu/GCC validates the portable graph semantics.
 
-CI validates Windows/MSVC and Ubuntu/GCC. It does not run heavyweight ACE inference because local model weights are not installed on GitHub runners.
+CI does not run heavyweight ACE inference because the local model/runtime weights are not installed on GitHub runners.
 
 LOCAL DATA
 ----------
@@ -149,11 +169,12 @@ Version HEAD records:
 
 CURRENT LIMITS
 --------------
-- V0.2L adds the persistent version engine; dedicated PARENT/PROMOTE/branch buttons are the next UI layer.
+- The V0.2M rail navigates parent, sibling/direct-child branches and HEAD; a full graphical tree/timeline view is later.
+- Compare is fast branch switching, not simultaneous dual-waveform synchronized A/B playback yet.
 - Extend remains intentionally blocked until continuation behavior is separately validated.
 - ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
-- EtherCritic is still DSP-derived; learned semantic/taste heads come later.
+- EtherCritic remains DSP-derived; learned semantic/taste heads come later.
 - Pleiadian taste adaptation is not trained yet.
 - Dedicated Vocal provider is not wired yet.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public package.

@@ -94,7 +94,8 @@ int main() {
             analyzer,
             etherbeat::SearchOptions{
                 .draft = etherbeat::DraftOptions{.candidate_count = 4, .continue_after_failure = true},
-                .critic = etherbeat::CriticWeights{}
+                .critic = etherbeat::CriticWeights{},
+                .promote_quality = false
             });
 
         if (report.draft_batch.candidates.size() != 4 ||
@@ -106,7 +107,8 @@ int main() {
             !report.winner_candidate_index ||
             *report.winner_candidate_index != 2u ||
             report.winner_seed != report.draft_batch.candidates[2].seed ||
-            report.winner_audio_path != report.draft_batch.candidates[2].artifact.audio_path) {
+            report.winner_audio_path != report.draft_batch.candidates[2].artifact.audio_path ||
+            report.quality_promoted) {
             std::cerr << "EtherSearch did not produce the expected analyzed/ranked search result\n";
             return 1;
         }
@@ -139,6 +141,7 @@ int main() {
             manifest.find("\"candidate_count\": 4") == std::string::npos ||
             manifest.find("\"analyzed_count\": 3") == std::string::npos ||
             manifest.find("\"dna_count\": 3") == std::string::npos ||
+            manifest.find("\"draft_winner_candidate_index\": 2") == std::string::npos ||
             manifest.find("\"winner_candidate_index\": 2") == std::string::npos ||
             manifest.find("synthetic analyzer rejection") == std::string::npos) {
             std::cerr << "EtherSearch manifest is missing orchestration lineage\n";

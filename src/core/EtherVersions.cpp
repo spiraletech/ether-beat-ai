@@ -1,5 +1,6 @@
 #include "etherbeat/EtherVersions.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <fstream>
@@ -270,6 +271,10 @@ VersionLineage EtherVersions::lineage_for_audio(const fs::path& audio_path) cons
         if (!current->parent_id.empty() && record.version_id == current->parent_id) lineage.parent = record;
         if (record.parent_id == current->version_id) lineage.children.push_back(record);
     }
+    std::sort(lineage.children.begin(), lineage.children.end(), [](const VersionRecord& a, const VersionRecord& b) {
+        if (a.created_unix_ms != b.created_unix_ms) return a.created_unix_ms < b.created_unix_ms;
+        return a.version_id < b.version_id;
+    });
     return lineage;
 }
 

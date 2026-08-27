@@ -12,9 +12,9 @@ namespace fs = std::filesystem;
 
 namespace {
 
-etherbeat::PcmAudio make_pcm(double seconds, float amplitude, float frequency = 220.0f) {
+etherbeat::PcmAudio make_pcm(double seconds, float amplitude, float frequency = 220.0f, std::uint32_t rate = 48'000) {
     etherbeat::PcmAudio audio;
-    audio.sample_rate = 48'000;
+    audio.sample_rate = rate;
     audio.channels = 2;
     const std::size_t frames = static_cast<std::size_t>(seconds * audio.sample_rate);
     audio.samples.resize(frames * audio.channels);
@@ -63,13 +63,15 @@ int main() {
             assert(slot.slot_id == "bridge-alt");
             assert(expected_duration > 0.9 && expected_duration < 1.1);
             ++placeholder_calls;
-            return make_pcm(expected_duration, 0.20f, 330.0f);
+            return make_pcm(expected_duration, 0.20f, 330.0f, 44'100);
         },
         {.crossfade_seconds=0.010, .require_all_placeholders=true});
 
     assert(result.success());
     assert(fs::exists(result.audio_path));
     assert(fs::exists(result.manifest_path));
+    assert(result.sample_rate == 48'000u);
+    assert(result.channels == 2u);
     assert(result.slots.size() == 4u);
     assert(decode_calls == 1);
     assert(placeholder_calls == 1);
@@ -79,7 +81,7 @@ int main() {
     assert(result.slots[3].generated);
     assert(result.duration_seconds > 3.95 && result.duration_seconds < 3.99);
     assert(result.slots[1].output_start_seconds < 1.0);
-    assert(result.slots[3].output_end_seconds == result.duration_seconds);
+    assert(std::abs(result.slots[3].output_end_seconds - result.duration_seconds) < 0.00001);
 
     std::ifstream wav(result.audio_path, std::ios::binary);
     char riff[4]{};
@@ -95,30 +97,25 @@ int main() {
 
     bool unresolved_rejected = false;
     try {
-        static_cast<void>(assembler.render(
-            plan,
-            root / "should-fail.wav",
-            [&](const fs::path&) { return source; }));
+        static_cast<void>(assembler.render(plan, root / "should-fail.wav", [&](const fs::path&) { return source; }));
     } catch (...) {
         unresolved_rejected = true;
     }
     assert(unresolved_rejected);
 
-    bool mismatch_rejected = false;
-    try {
-        static_cast<void>(assembler.render(
-            plan,
-            root / "mismatch.wav",
-            [&](const fs::path&) { return source; },
-            [&](const etherbeat::ArrangementSlot&, double seconds) -> std::optional<etherbeat::PcmAudio> {
-                auto wrong = make_pcm(seconds, 0.2f);
-                wrong.sample_rate = 44'100;
-                return wrong;
-            }));
-    } catch (...) {
-        mismatch_rejected = true;
-    }
-    assert(mismatch_rejected);
+    // Placeholder-only plans are also legal: the first generated fragment establishes output format.
+    etherbeat::ArrangementPlan placeholder_only;
+    placeholder_only.source_audio = root / "unused.wav";
+    placeholder_only.slots = {{.slot_id="alt", .kind=etherbeat::SectionKind::Hook, .label="HOOK ALT", .origin=etherbeat::ArrangementOrigin::Placeholder, .instruction="hook"}};
+    const auto generated_only = assembler.render(
+        placeholder_only,
+        root / "generated-only.wav",
+        [&](const fs::path&) -> etherbeat::PcmAudio { assert(false); return {}; },
+        [&](const etherbeat::ArrangementSlot&, double seconds) -> std::optional<etherbeat::PcmAudio> {
+            return make_pcm(seconds, 0.15f, 440.0f, 44'100);
+        });
+    assert(generated_only.sample_rate == 44'100u);
+    assert(generated_only.success());
 
     fs::remove_all(root, ec);
     return 0;

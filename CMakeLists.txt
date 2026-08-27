@@ -71,7 +71,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWinTimeline.cpp
+        src/win32/EtherBeatTabbedWinSections.cpp
         src/win32/AudioAnalysisWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

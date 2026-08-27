@@ -1,9 +1,9 @@
 #include "etherbeat/AceStepApiBackend.hpp"
+#include "etherbeat/AceStepRequestCodec.hpp"
 
 #include <windows.h>
 #include <winhttp.h>
 
-#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -75,6 +75,17 @@ std::string json_escape(const std::string& value) {
     return out.str();
 }
 
+std::string mode_name(GenerationMode mode) {
+    switch (mode) {
+    case GenerationMode::TextToInstrumental: return "text_to_instrumental";
+    case GenerationMode::Variation: return "variation";
+    case GenerationMode::Extend: return "extend";
+    case GenerationMode::AudioToAudio: return "audio_to_audio";
+    case GenerationMode::ReplaceSection: return "replace_section";
+    }
+    return "unknown";
+}
+
 HttpResponse request_http(
     const std::wstring& host,
     std::uint16_t port,
@@ -84,7 +95,7 @@ HttpResponse request_http(
     DWORD receive_timeout_ms = 900000) {
 
     InternetHandle session{WinHttpOpen(
-        L"ETHERBEAT/0.1B",
+        L"ETHERBEAT/0.2J",
         WINHTTP_ACCESS_TYPE_NO_PROXY,
         WINHTTP_NO_PROXY_NAME,
         WINHTTP_NO_PROXY_BYPASS,
@@ -226,42 +237,26 @@ std::uint64_t fallback_seed(std::uint64_t requested) {
         std::chrono::high_resolution_clock::now().time_since_epoch().count());
 }
 
-std::string make_generation_body(const GenerationRequest& request) {
-    std::ostringstream body;
-    body << "{"
-         << "\"prompt\":\"" << json_escape(request.prompt) << "\","
-         << "\"lyrics\":\"[Instrumental]\","
-         << "\"thinking\":false,"
-         << "\"instrumental\":true,"
-         << "\"batch_size\":1,"
-         << "\"audio_format\":\"wav\","
-         << "\"audio_duration\":" << std::clamp(request.duration_seconds, 10.0, 600.0) << ","
-         << "\"use_random_seed\":" << (request.seed == 0 ? "true" : "false") << ","
-         << "\"seed\":" << (request.seed == 0 ? -1LL : static_cast<long long>(request.seed));
-
-    if (request.bpm >= 30.0 && request.bpm <= 300.0) {
-        body << ",\"bpm\":" << static_cast<int>(request.bpm + 0.5);
-    }
-    if (!request.key.empty()) {
-        body << ",\"key_scale\":\"" << json_escape(request.key) << "\"";
-    }
-    body << "}";
-    return body.str();
-}
-
 void write_metadata(
     const std::filesystem::path& path,
     const GenerationRequest& request,
+    const std::string& task_type,
     std::uint64_t seed) {
     std::ofstream out(path, std::ios::binary);
     if (!out) throw std::runtime_error("Could not create ACE-Step lineage metadata");
     out << "{\n"
         << "  \"schema\": \"etherbeat.generation.v1\",\n"
         << "  \"backend\": \"ace-step-1.5-local-api\",\n"
+        << "  \"provider_task\": \"" << json_escape(task_type) << "\",\n"
+        << "  \"mode\": \"" << mode_name(request.mode) << "\",\n"
+        << "  \"render_intent\": \"" << render_intent_name(request.render_intent) << "\",\n"
         << "  \"seed\": " << seed << ",\n"
         << "  \"duration_seconds\": " << request.duration_seconds << ",\n"
         << "  \"bpm\": " << request.bpm << ",\n"
         << "  \"key\": \"" << json_escape(request.key) << "\",\n"
+        << "  \"reference_strength\": " << request.control.reference_strength << ",\n"
+        << "  \"edit_start_seconds\": " << request.control.edit_start_seconds << ",\n"
+        << "  \"edit_end_seconds\": " << request.control.edit_end_seconds << ",\n"
         << "  \"prompt\": \"" << json_escape(request.prompt) << "\"\n"
         << "}\n";
 }
@@ -273,6 +268,10 @@ AceStepApiBackend::AceStepApiBackend(std::wstring host, std::uint16_t port)
 
 std::string_view AceStepApiBackend::name() const noexcept {
     return "ace-step-1.5-local-api";
+}
+
+ProviderCapabilities AceStepApiBackend::capabilities() const noexcept {
+    return ace_step_provider_capabilities();
 }
 
 bool AceStepApiBackend::server_ready() const noexcept {
@@ -288,14 +287,15 @@ GenerationArtifact AceStepApiBackend::generate(
     const GenerationRequest& request,
     const std::filesystem::path& output_directory) {
 
-    if (request.prompt.empty()) throw std::runtime_error("ACE-Step requires a prompt");
+    const AceStepRequestPayload payload = build_ace_step_request_payload(request);
+
     if (!server_ready()) {
         throw std::runtime_error(
-            "ACE-Step local model service is offline. Run SETUP_ACE_STEP.bat once, then START_ACE_STEP.bat, and keep that window open while EtherBeat generates.");
+            "ACE-Step local model service is offline. EtherBeat could not start or reach the managed local runtime.");
     }
 
     const auto submit = request_http(
-        host_, port_, L"POST", L"/release_task", make_generation_body(request), 30000);
+        host_, port_, L"POST", L"/release_task", payload.json_body, 30000);
     const std::string submit_text = as_text(submit);
     if (submit.status < 200 || submit.status >= 300) {
         throw std::runtime_error("ACE-Step rejected the generation request: " + submit_text);
@@ -305,7 +305,7 @@ GenerationArtifact AceStepApiBackend::generate(
     if (task_id.empty()) throw std::runtime_error("ACE-Step did not return a task id");
 
     std::string completed_response;
-    constexpr int max_polls = 450; // 15 minutes at 2 seconds per poll.
+    constexpr int max_polls = 450;
     for (int attempt = 0; attempt < max_polls; ++attempt) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
         const std::string query_body = "{\"task_id_list\":[\"" + json_escape(task_id) + "\"]}";
@@ -341,7 +341,7 @@ GenerationArtifact AceStepApiBackend::generate(
         std::chrono::system_clock::now().time_since_epoch()).count();
 
     std::ostringstream stem;
-    stem << "etherbeat_ace_" << stamp;
+    stem << "etherbeat_ace_" << payload.task_type << "_" << stamp;
     const auto audio_path = output_directory / (stem.str() + ".wav");
     const auto metadata_path = output_directory / (stem.str() + ".etherbeat.json");
 
@@ -350,7 +350,7 @@ GenerationArtifact AceStepApiBackend::generate(
     wav.write(reinterpret_cast<const char*>(audio.body.data()), static_cast<std::streamsize>(audio.body.size()));
     if (!wav) throw std::runtime_error("Could not finish writing ACE-Step WAV output");
 
-    write_metadata(metadata_path, request, seed);
+    write_metadata(metadata_path, request, payload.task_type, seed);
 
     return GenerationArtifact{
         .audio_path = audio_path,

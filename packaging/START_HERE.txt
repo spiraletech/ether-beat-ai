@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2F
+ETHERBEAT // ALIEN WORKSHOP V0.2G
 
 UI ANCHOR
 ---------
@@ -6,122 +6,131 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-NEW IN V0.2F // ETHERCRITIC V0.1
+NEW IN V0.2G // ETHERSEARCH V0.1
 -------------------------------
-EtherBeat now has an explainable candidate-ranking layer above EtherDraft.
+CREATE is now connected to the multi-candidate engine stack instead of the old one-shot generation path.
 
-EtherCritic does not guess which draft is "best" from filenames, seeds or provider order.
-It consumes persistent EtherDNA measurements and compares each candidate against the numeric intent produced by EtherComposer.
+Pressing SEARCH x4 performs:
 
-SCORING HEADS
--------------
-V0.1 scores five measurable dimensions:
-- energy match
-- low-end / bass-weight match
-- rhythmic-activity match
-- spectral-character / brightness match
-- texture proxy match
+  source prompt
+      -> EtherComposer
+      -> EtherDraft x4
+      -> Provider Router
+      -> four local candidate audio files
+      -> native EtherPlay-derived FFT analysis on each candidate
+      -> EtherDNA sidecar persistence
+      -> EtherCritic ranking
+      -> promoted winner
+      -> Now Playing
 
-Default normalized weighting emphasizes bass and rhythmic fit while preserving energy, spectral character and texture.
-Every component score and the final weighted score are written to the critic manifest.
+All candidate audio remains in the private local Library. EtherSearch does not delete the alternates after choosing a winner.
 
-NO DNA = NO FAKE SCORE
-----------------------
-A successful audio artifact without a .etherdna.json sidecar is not assigned invented confidence.
-It remains visible in the report but is marked unscored and falls behind candidates with real measurements.
+ETHERSEARCH CONTRACT
+--------------------
+EtherSearch V0.1 is renderer-agnostic orchestration above EtherDraft and EtherCritic.
 
-That makes the intended pipeline explicit:
+For every candidate it preserves distinct state for:
+- generation success/failure
+- audio path / seed lineage
+- analyzer success/failure
+- EtherDNA persistence
 
-  draft candidate
-      -> native EtherPlay-derived analysis
-      -> EtherDNA
-      -> EtherCritic
-      -> ranked candidate
+A candidate can therefore generate successfully but fail analysis without being mislabeled as a model-generation failure.
 
-CRITIC MANIFEST
+If analysis fails, the candidate remains in the batch and diagnostics, but EtherCritic will not invent a score for it.
+
+SEARCH MANIFEST
 ---------------
-EtherCritic writes:
+Each search writes:
 
-  <draft-batch-id>.ethercritic.json
+  <draft-batch-id>.ethersearch.json
 
-The manifest records:
-- schema etherbeat.critic.v1
-- source draft batch ID
-- Composer target values
-- normalized critic weights
-- winner candidate index
-- winner audio path / seed
-- full ranking
-- per-candidate component scores
-- provider lineage
-- DNA availability
-- explainable notes/errors
+The search manifest links:
+- schema etherbeat.search.v1
+- search / draft batch ID
+- EtherDraft manifest
+- EtherCritic manifest
+- candidate count
+- analyzed candidate count
+- persisted DNA count
+- promoted winner candidate index
+- winner seed / audio path
+- per-candidate generation/analysis/DNA state
+- analyzer error notes
+
+The linked files now form a complete local lineage graph:
+
+  .etherdraft.json
+      -> candidate WAVs
+      -> .etherdna.json sidecars
+      -> .ethercritic.json
+      -> .ethersearch.json
+
+LIVE CREATE FLOW
+----------------
+The existing EtherBeat CREATE screen remains the UI anchor.
+Its main action now reads SEARCH x4.
+
+The current live behavior is:
+- build four Draft-intent candidates
+- analyze all successful candidates automatically
+- persist EtherDNA
+- rank candidates against EtherComposer numeric intent
+- promote the highest measured candidate
+- open that winner in NOW PLAYING
+- leave every alternate in LIBRARY
+
+If no candidate can be measured well enough to produce a Critic winner, EtherSearch reports failure while retaining candidate files/manifests for diagnostics.
 
 ENGINE STACK
 ------------
   ETHERBEAT UI
       -> EtherComposer V0.1
-      -> EtherDraft V0.1
-          -> Provider Router V0.1
-          -> candidate A / B / C / D
-      -> native audio analysis
-      -> EtherDNA V0.1
-      -> EtherCritic V0.1
-          -> energy score
-          -> bass score
-          -> rhythm score
-          -> spectral score
-          -> texture score
-      -> promoted winner
-      -> future Quality render / user comparison
+      -> EtherSearch V0.1
+          -> EtherDraft V0.1
+              -> Provider Router V0.1
+              -> candidate A / B / C / D
+          -> native audio analyzer
+          -> EtherDNA V0.1
+          -> EtherCritic V0.1
+          -> promoted winner
+      -> NOW PLAYING / LIBRARY
 
-TESTED ETHERCRITIC CONTRACT
+TESTED ETHERSEARCH CONTRACT
 ---------------------------
-Automated tests stage four draft candidates with deliberately different audio identities.
-Candidate 2 is constructed to match the Composer target and must win the ranking.
-Candidate 3 deliberately has no EtherDNA sidecar and must remain unscored rather than receiving fabricated confidence.
+A dedicated portable search smoke test generates four candidates using the mock Draft provider.
+Three receive successful synthetic audio analysis and EtherDNA; one deliberately fails analysis.
 
-The tests verify:
-- deterministic winner selection
-- component-weighted score near 1.0 for the intended match
-- missing-DNA candidate falls behind measured candidates
-- winner candidate index / seed / path persist
-- etherbeat.critic.v1 manifest is created
-- explainable missing-DNA note persists
-- Windows/MSVC and Ubuntu/GCC execute the same critic assertions
-
-CURRENT UI BOUNDARY
--------------------
-The existing CREATE button still uses the direct Quality path in this package.
-V0.2F establishes the ranking brain first.
-
-The next integration layer can now safely expose:
-
-  DRAFT x4
-      -> analyze all four
-      -> Critic ranks them
-      -> show top candidates / auto-promote winner
-
-without dumping four unranked generations onto the user.
+The test verifies:
+- four draft candidates survive the batch
+- three analyzed candidates persist three DNA sidecars
+- analyzer failure remains candidate-local
+- EtherCritic receives the measured candidates
+- candidate 2 is promoted as the expected winner
+- failed-analysis candidate remains unscored
+- Draft, Critic and Search manifests all persist
+- Windows/MSVC and Ubuntu/GCC run the same orchestration assertions
 
 CURRENT LIVE PROVIDER
 ---------------------
 ACE-Step remains the current local text-to-instrumental provider and advertises Draft + Quality capability.
-EtherDraft and EtherCritic remain provider-agnostic.
+Because no separate fast Draft model is installed yet, SEARCH x4 currently invokes the same local foundation renderer four times sequentially.
+This is architecturally correct but can be slower than the future dedicated Draft path.
 
 LOCAL DATA
 ----------
 Runtime:
   %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
 
-Generated library:
+Generated library / search lineage:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
 CURRENT LIMITS
 --------------
+- EtherSearch V0.1 generates candidates sequentially; provider-native batching/parallel inference comes later.
+- The promoted Draft winner is not yet re-rendered through a dedicated final Quality pass.
 - EtherCritic V0.1 uses deterministic DSP-derived EtherDNA only.
-- Texture scoring is an explicit spectral proxy until richer flatness/learned texture features arrive.
 - Learned CLAP/MERT-style semantic scoring is a later critic head.
-- User taste / Pleiadian preference weighting is not trained yet.
+- Pleiadian/user taste weighting is not trained yet.
 - Dedicated Control and Vocal providers are not wired yet.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

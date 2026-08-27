@@ -49,7 +49,13 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32 src/win32/EtherBeatWin.cpp)
-    target_link_libraries(EtherBeat PRIVATE etherbeat_core comdlg32 shell32)
+    target_link_libraries(EtherBeat PRIVATE
+        etherbeat_core
+        comdlg32
+        shell32
+        gdiplus
+        dwmapi
+    )
     target_compile_definitions(EtherBeat PRIVATE UNICODE _UNICODE NOMINMAX)
     set_target_properties(EtherBeat PROPERTIES OUTPUT_NAME "ETHERBEAT")
 

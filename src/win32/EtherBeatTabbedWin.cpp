@@ -1,0 +1,784 @@
+#define UNICODE
+#define _UNICODE
+#define NOMINMAX
+
+#include "etherbeat/AudioAnalysis.hpp"
+#include "etherbeat/AceStepEngineManager.hpp"
+#include "etherbeat/GenerationTypes.hpp"
+#include "etherbeat/ModelRouter.hpp"
+
+#include <windows.h>
+#include <commdlg.h>
+#include <dwmapi.h>
+#include <gdiplus.h>
+#include <mmsystem.h>
+#include <shellapi.h>
+#include <shlobj.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdint>
+#include <filesystem>
+#include <iomanip>
+#include <mutex>
+#include <sstream>
+#include <string>
+#include <thread>
+#include <vector>
+
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdiplus.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "winmm.lib")
+
+using namespace Gdiplus;
+namespace fs = std::filesystem;
+
+namespace {
+
+constexpr wchar_t kWindowClass[] = L"EtherBeatTabbedWindow";
+constexpr DWORD kImmersiveDarkModeAttribute = 20;
+constexpr int kMinWidth = 1120;
+constexpr int kMinHeight = 720;
+constexpr UINT WM_APP_WORK_DONE = WM_APP + 41;
+
+constexpr int ID_PROMPT = 2001;
+constexpr int ID_BPM = 2002;
+constexpr int ID_KEY = 2003;
+constexpr int ID_DURATION = 2004;
+constexpr int ID_SEED = 2005;
+
+enum class Screen { Home, Create, Library, NowPlaying, SongLab, Engine };
+enum class WorkKind { None, Generate, AnalyzeReference, AnalyzeGenerated, EngineCheck };
+
+enum Action {
+    ActTabHome = 1,
+    ActTabCreate,
+    ActTabLibrary,
+    ActTabNowPlaying,
+    ActTabSongLab,
+    ActTabEngine,
+    ActGenerate = 100,
+    ActChooseReference,
+    ActOpenLibrary,
+    ActPlay,
+    ActStop,
+    ActStartEngine,
+    ActOpenRuntime,
+    ActLibraryBase = 1000
+};
+
+struct HitZone { RectF rect; int action; };
+
+HINSTANCE g_instance{};
+HWND g_window{};
+HWND g_prompt{};
+HWND g_bpm{};
+HWND g_key{};
+HWND g_duration{};
+HWND g_seed{};
+HFONT g_uiFont{};
+HFONT g_promptFont{};
+HBRUSH g_editBrush{};
+ULONG_PTR g_gdiplus{};
+
+Screen g_screen = Screen::Home;
+std::vector<HitZone> g_hits;
+std::vector<fs::path> g_library;
+fs::path g_nowPlaying;
+fs::path g_reference;
+etherbeat::AudioAnalysis g_analysis{};
+std::wstring g_status = L"ETHERBEAT // READY";
+std::atomic<bool> g_working{false};
+std::mutex g_resultMutex;
+WorkKind g_pendingKind = WorkKind::None;
+bool g_pendingSuccess = false;
+std::wstring g_pendingError;
+fs::path g_pendingArtifact;
+etherbeat::AudioAnalysis g_pendingAnalysis{};
+std::uint64_t g_pendingSeed = 0;
+
+Color amber(BYTE a = 255) { return Color(a, 242, 195, 61); }
+Color warm(BYTE a = 255) { return Color(a, 244, 242, 235); }
+Color muted(BYTE a = 255) { return Color(a, 142, 134, 116); }
+Color panel(BYTE a = 248) { return Color(a, 7, 7, 8); }
+Color violet(BYTE a = 255) { return Color(a, 151, 88, 236); }
+Color pink(BYTE a = 255) { return Color(a, 225, 55, 151); }
+
+RectF R(float x, float y, float w, float h) { return RectF(x, y, w, h); }
+
+void roundRect(Graphics& g, const RectF& r, float radius, Color fill, Color stroke = Color(0, 0, 0, 0), float strokeWidth = 1.f) {
+    GraphicsPath p;
+    const float d = radius * 2.f;
+    p.AddArc(r.X, r.Y, d, d, 180.f, 90.f);
+    p.AddArc(r.GetRight() - d, r.Y, d, d, 270.f, 90.f);
+    p.AddArc(r.GetRight() - d, r.GetBottom() - d, d, d, 0.f, 90.f);
+    p.AddArc(r.X, r.GetBottom() - d, d, d, 90.f, 90.f);
+    p.CloseFigure();
+    SolidBrush b(fill);
+    g.FillPath(&b, &p);
+    if (stroke.GetA()) {
+        Pen pen(stroke, strokeWidth);
+        g.DrawPath(&pen, &p);
+    }
+}
+
+void drawText(Graphics& g, const std::wstring& value, const RectF& r, float size, Color color,
+              int style = FontStyleRegular, StringAlignment h = StringAlignmentNear,
+              StringAlignment v = StringAlignmentNear) {
+    FontFamily family(L"Segoe UI");
+    Font font(&family, size, style, UnitPixel);
+    SolidBrush brush(color);
+    StringFormat fmt;
+    fmt.SetAlignment(h);
+    fmt.SetLineAlignment(v);
+    fmt.SetTrimming(StringTrimmingEllipsisCharacter);
+    g.DrawString(value.c_str(), -1, &font, r, &fmt, &brush);
+}
+
+void addHit(const RectF& rect, int action) { g_hits.push_back({rect, action}); }
+
+bool hit(const RectF& r, int x, int y) {
+    return x >= r.X && x <= r.GetRight() && y >= r.Y && y <= r.GetBottom();
+}
+
+std::wstring getText(HWND control) {
+    const int n = GetWindowTextLengthW(control);
+    std::vector<wchar_t> buffer(static_cast<std::size_t>(n) + 1u, L'\0');
+    GetWindowTextW(control, buffer.data(), static_cast<int>(buffer.size()));
+    return std::wstring(buffer.data());
+}
+
+std::string utf8(const std::wstring& value) {
+    if (value.empty()) return {};
+    const int n = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(std::max(0, n)), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), n, nullptr, nullptr);
+    return out;
+}
+
+std::wstring wide(const std::string& value) {
+    if (value.empty()) return {};
+    const int n = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+    std::wstring out(static_cast<std::size_t>(std::max(0, n)), L'\0');
+    if (n > 0) MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), out.data(), n);
+    return out;
+}
+
+double parseDouble(HWND control, double fallback, double lo, double hi) {
+    const auto text = getText(control);
+    wchar_t* end = nullptr;
+    const double value = std::wcstod(text.c_str(), &end);
+    if (end == text.c_str() || !std::isfinite(value)) return fallback;
+    return std::clamp(value, lo, hi);
+}
+
+std::uint64_t parseSeed() {
+    const auto text = getText(g_seed);
+    if (text.empty() || text == L"random" || text == L"RANDOM") return 0;
+    wchar_t* end = nullptr;
+    const auto value = std::wcstoull(text.c_str(), &end, 10);
+    return end == text.c_str() ? 0 : static_cast<std::uint64_t>(value);
+}
+
+fs::path localRoot() {
+    PWSTR raw = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, KF_FLAG_CREATE, nullptr, &raw)) || !raw) {
+        return fs::current_path() / L"EtherBeatData";
+    }
+    fs::path p(raw);
+    CoTaskMemFree(raw);
+    return p / L"EtherTech" / L"EtherBeat";
+}
+
+fs::path libraryRoot() {
+    auto p = localRoot() / L"library";
+    std::error_code ec;
+    fs::create_directories(p, ec);
+    return p;
+}
+
+void setStatus(const std::wstring& value) {
+    g_status = value;
+    if (g_window) InvalidateRect(g_window, nullptr, FALSE);
+}
+
+void refreshLibrary() {
+    g_library.clear();
+    std::error_code ec;
+    const auto root = libraryRoot();
+    for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
+        if (ec || !entry.is_regular_file(ec)) continue;
+        auto ext = entry.path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+        if (ext == L".wav" || ext == L".mp3" || ext == L".flac") g_library.push_back(entry.path());
+    }
+    std::sort(g_library.begin(), g_library.end(), [](const fs::path& a, const fs::path& b) {
+        std::error_code ea, eb;
+        const auto ta = fs::last_write_time(a, ea);
+        const auto tb = fs::last_write_time(b, eb);
+        if (ea || eb) return a.filename().wstring() > b.filename().wstring();
+        return ta > tb;
+    });
+}
+
+void showCreateControls(bool show) {
+    const int cmd = show ? SW_SHOW : SW_HIDE;
+    for (HWND h : {g_prompt, g_bpm, g_key, g_duration, g_seed}) if (h) ShowWindow(h, cmd);
+}
+
+void setScreen(Screen screen) {
+    g_screen = screen;
+    showCreateControls(screen == Screen::Create);
+    if (screen == Screen::Library) refreshLibrary();
+    InvalidateRect(g_window, nullptr, FALSE);
+}
+
+std::wstring chooseAudio(HWND owner) {
+    wchar_t buffer[32768]{};
+    const wchar_t filter[] = L"Audio (*.wav;*.mp3;*.flac)\0*.wav;*.mp3;*.flac\0All files\0*.*\0\0";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = buffer;
+    ofn.nMaxFile = 32768;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER;
+    ofn.lpstrTitle = L"Choose audio for EtherBeat Song Lab";
+    return GetOpenFileNameW(&ofn) ? std::wstring(buffer) : std::wstring{};
+}
+
+void stopPlayback() {
+    mciSendStringW(L"stop etherbeat_now", nullptr, 0, nullptr);
+    mciSendStringW(L"close etherbeat_now", nullptr, 0, nullptr);
+}
+
+void playPath(const fs::path& path) {
+    if (path.empty() || !fs::exists(path)) return;
+    stopPlayback();
+    std::wstring command = L"open \"" + path.wstring() + L"\" alias etherbeat_now";
+    if (mciSendStringW(command.c_str(), nullptr, 0, nullptr) == 0) {
+        mciSendStringW(L"play etherbeat_now", nullptr, 0, nullptr);
+    }
+}
+
+void postWork(WorkKind kind, bool success, const std::wstring& error, const fs::path& artifact,
+              const etherbeat::AudioAnalysis& analysis, std::uint64_t seed) {
+    {
+        std::scoped_lock lock(g_resultMutex);
+        g_pendingKind = kind;
+        g_pendingSuccess = success;
+        g_pendingError = error;
+        g_pendingArtifact = artifact;
+        g_pendingAnalysis = analysis;
+        g_pendingSeed = seed;
+    }
+    if (g_window) PostMessageW(g_window, WM_APP_WORK_DONE, 0, 0);
+}
+
+void startGenerate() {
+    if (g_working.exchange(true)) return;
+
+    etherbeat::GenerationRequest request;
+    request.prompt = utf8(getText(g_prompt));
+    if (request.prompt.empty()) {
+        g_working = false;
+        MessageBoxW(g_window, L"Describe the beat first.", L"ETHERBEAT", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    request.duration_seconds = parseDouble(g_duration, 20.0, 10.0, 600.0);
+    request.bpm = parseDouble(g_bpm, 68.0, 30.0, 300.0);
+    request.key = utf8(getText(g_key));
+    request.seed = parseSeed();
+    request.mode = etherbeat::GenerationMode::TextToInstrumental;
+
+    const bool installed = etherbeat::managed_ace_step_runtime_installed();
+    setStatus(installed ? L"GENERATING // waking local pretrained model..." : L"FIRST RUN // acquiring private model runtime automatically...");
+
+    std::thread([request] {
+        try {
+            etherbeat::ModelRouter router{etherbeat::make_default_backend()};
+            const auto artifact = router.generate(request, libraryRoot());
+            const auto analysis = etherbeat::analyze_audio_file(artifact.audio_path);
+            postWork(WorkKind::Generate, true, L"", artifact.audio_path, analysis, artifact.resolved_seed);
+        } catch (const std::exception& e) {
+            postWork(WorkKind::Generate, false, wide(e.what()), {}, {}, 0);
+        }
+    }).detach();
+}
+
+void startReferenceAnalysis(const fs::path& path) {
+    if (g_working.exchange(true)) return;
+    setStatus(L"SONG LAB // reading frequency DNA...");
+    std::thread([path] {
+        const auto analysis = etherbeat::analyze_audio_file(path);
+        postWork(WorkKind::AnalyzeReference, analysis.ready, wide(analysis.error), path, analysis, 0);
+    }).detach();
+}
+
+void startEngineCheck() {
+    if (g_working.exchange(true)) return;
+    setStatus(etherbeat::managed_ace_step_runtime_installed()
+        ? L"ENGINE // starting private model..."
+        : L"ENGINE // first-use runtime download may be large...");
+    std::thread([] {
+        try {
+            etherbeat::ensure_managed_ace_step_engine();
+            postWork(WorkKind::EngineCheck, true, L"", {}, {}, 0);
+        } catch (const std::exception& e) {
+            postWork(WorkKind::EngineCheck, false, wide(e.what()), {}, {}, 0);
+        }
+    }).detach();
+}
+
+void drawButton(Graphics& g, const RectF& r, const std::wstring& label, int action, bool accent = false) {
+    roundRect(g, r, 17.f,
+              accent ? Color(255, 34, 29, 10) : Color(246, 15, 15, 16),
+              accent ? amber(190) : Color(90, 94, 87, 70), 1.f);
+    drawText(g, label, r, 11.f, accent ? amber() : warm(), FontStyleBold, StringAlignmentCenter, StringAlignmentCenter);
+    addHit(r, action);
+}
+
+void drawNav(Graphics& g, float width) {
+    struct Tab { const wchar_t* label; Screen screen; int action; } tabs[] = {
+        {L"home", Screen::Home, ActTabHome},
+        {L"create", Screen::Create, ActTabCreate},
+        {L"library", Screen::Library, ActTabLibrary},
+        {L"now playing", Screen::NowPlaying, ActTabNowPlaying},
+        {L"song lab", Screen::SongLab, ActTabSongLab},
+        {L"engine", Screen::Engine, ActTabEngine}
+    };
+    float x = 34.f;
+    for (const auto& tab : tabs) {
+        const float w = std::max(76.f, 22.f + static_cast<float>(wcslen(tab.label)) * 7.3f);
+        const RectF r = R(x, 73.f, w, 30.f);
+        const bool selected = g_screen == tab.screen;
+        if (selected) roundRect(g, r, 14.f, Color(255, 31, 27, 10), amber(185), 1.f);
+        drawText(g, tab.label, r, 11.f, selected ? amber() : muted(), selected ? FontStyleBold : FontStyleRegular,
+                 StringAlignmentCenter, StringAlignmentCenter);
+        addHit(r, tab.action);
+        x += w + 7.f;
+    }
+    drawText(g, L"ETHERPLAY DNA // ETHERBEAT V0.2", R(width - 330.f, 78.f, 295.f, 20.f), 10.f, muted(), FontStyleBold,
+             StringAlignmentFar);
+}
+
+void drawAnalyzer(Graphics& g, const RectF& area, const etherbeat::AudioAnalysis& analysis) {
+    roundRect(g, area, 22.f, panel(), Color(95, 91, 84, 67));
+    drawText(g, L"ETHERTECH // FREQUENCY ANALYZER", R(area.X + 20.f, area.Y + 18.f, area.Width - 40.f, 24.f),
+             11.f, amber(), FontStyleBold);
+
+    const float gx = area.X + 20.f;
+    const float gy = area.Y + 64.f;
+    const float gw = area.Width - 40.f;
+    const float gh = area.Height - 150.f;
+    for (int line = 0; line <= 4; ++line) {
+        const float y = gy + gh * static_cast<float>(line) / 4.f;
+        Pen p(Color(34, 100, 94, 77));
+        g.DrawLine(&p, gx, y, gx + gw, y);
+    }
+    constexpr int bars = 32;
+    const float gap = 3.f;
+    const float bw = (gw - gap * (bars - 1)) / bars;
+    for (int i = 0; i < bars; ++i) {
+        const float value = analysis.ready ? analysis.spectrum[static_cast<std::size_t>(i)] : .025f;
+        const float h = std::max(2.f, value * gh);
+        const float x = gx + static_cast<float>(i) * (bw + gap);
+        LinearGradientBrush fill(PointF(x, gy + gh), PointF(x, gy + gh - h), violet(170), pink(205));
+        g.FillRectangle(&fill, x, gy + gh - h, std::max(1.f, bw), h);
+    }
+    std::wstring stats = analysis.ready
+        ? L"BASS " + std::to_wstring(static_cast<int>(analysis.bass * 100.f)) + L"%   MID " +
+          std::to_wstring(static_cast<int>(analysis.mid * 100.f)) + L"%   AIR " +
+          std::to_wstring(static_cast<int>(analysis.treble * 100.f)) + L"%   BEAT " +
+          std::to_wstring(static_cast<int>(analysis.beat_peak * 100.f)) + L"%"
+        : L"NO AUDIO CAPTURED";
+    drawText(g, stats, R(area.X + 20.f, area.GetBottom() - 62.f, area.Width - 40.f, 22.f), 10.f,
+             analysis.ready ? warm() : muted(), FontStyleBold);
+    if (analysis.ready) {
+        std::wostringstream meta;
+        meta << analysis.sample_rate << L" Hz // " << std::fixed << std::setprecision(1) << analysis.duration_seconds << L" sec";
+        drawText(g, meta.str(), R(area.X + 20.f, area.GetBottom() - 38.f, area.Width - 40.f, 20.f), 9.f, muted());
+    }
+}
+
+void drawHome(Graphics& g, float W, float H) {
+    drawText(g, L"PRIVATE MUSIC MACHINE", R(42.f, 128.f, 550.f, 42.f), 29.f, warm(), FontStyleBold);
+    drawText(g, L"EtherPlay's media brain evolved into generation, analysis, playback and private model control.",
+             R(44.f, 174.f, W - 88.f, 28.f), 12.f, muted());
+
+    const RectF left = R(42.f, 226.f, W * .46f, H - 300.f);
+    const RectF right = R(left.GetRight() + 18.f, 226.f, W - left.GetRight() - 60.f, H - 300.f);
+    roundRect(g, left, 24.f, panel(), Color(85, 98, 89, 70));
+    roundRect(g, right, 24.f, panel(), Color(85, 98, 89, 70));
+
+    drawText(g, L"FOUNDATION", R(left.X + 22.f, left.Y + 22.f, left.Width - 44.f, 22.f), 11.f, amber(), FontStyleBold);
+    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(left.X + 22.f, left.Y + 60.f, left.Width - 44.f, 34.f), 19.f, warm(), FontStyleBold);
+    drawText(g, L"It should generate before any Pleiadian training exists. Training later teaches your private taste and sound lineage — it is not required for basic generation.",
+             R(left.X + 22.f, left.Y + 106.f, left.Width - 44.f, 84.f), 12.f, muted());
+    drawButton(g, R(left.X + 22.f, left.GetBottom() - 62.f, 150.f, 40.f), L"CREATE BEAT", ActTabCreate, true);
+
+    const bool installed = etherbeat::managed_ace_step_runtime_installed();
+    const bool ready = etherbeat::managed_ace_step_engine_ready();
+    drawText(g, L"ENGINE STATE", R(right.X + 22.f, right.Y + 22.f, right.Width - 44.f, 22.f), 11.f, amber(), FontStyleBold);
+    drawText(g, ready ? L"ONLINE" : (installed ? L"INSTALLED / SLEEPING" : L"NOT PROVISIONED YET"),
+             R(right.X + 22.f, right.Y + 60.f, right.Width - 44.f, 34.f), 18.f, ready ? Color(255, 176, 228, 156) : warm(), FontStyleBold);
+    drawText(g, installed
+        ? L"The runtime exists locally. EtherBeat will wake it invisibly when Generate needs it."
+        : L"First Generate will provision the official portable runtime automatically. This can be a large one-time download.",
+        R(right.X + 22.f, right.Y + 106.f, right.Width - 44.f, 70.f), 12.f, muted());
+    drawButton(g, R(right.X + 22.f, right.GetBottom() - 62.f, 150.f, 40.f), L"ENGINE CHECK", ActStartEngine, true);
+}
+
+void drawCreate(Graphics& g, float W, float H) {
+    drawText(g, L"CREATE", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
+    drawText(g, L"text → instrumental // real pretrained local model path", R(44.f, 166.f, 520.f, 24.f), 11.f, muted());
+
+    roundRect(g, R(42.f, 208.f, W - 84.f, H - 278.f), 24.f, panel(), Color(85, 98, 89, 70));
+    drawText(g, L"SYNESTHESIA / PRODUCTION LANGUAGE", R(66.f, 226.f, 430.f, 22.f), 10.f, amber(), FontStyleBold);
+    drawText(g, L"BPM", R(66.f, 492.f, 90.f, 18.f), 10.f, muted(), FontStyleBold);
+    drawText(g, L"KEY", R(190.f, 492.f, 90.f, 18.f), 10.f, muted(), FontStyleBold);
+    drawText(g, L"DURATION", R(314.f, 492.f, 100.f, 18.f), 10.f, muted(), FontStyleBold);
+    drawText(g, L"SEED", R(438.f, 492.f, 100.f, 18.f), 10.f, muted(), FontStyleBold);
+
+    const bool installed = etherbeat::managed_ace_step_runtime_installed();
+    const bool ready = etherbeat::managed_ace_step_engine_ready();
+    drawText(g, L"MODEL", R(W - 345.f, 492.f, 80.f, 18.f), 10.f, muted(), FontStyleBold);
+    drawText(g, ready ? L"ACE 1.5 ONLINE" : (installed ? L"ACE 1.5 LOCAL" : L"FIRST RUN SETUP"),
+             R(W - 345.f, 514.f, 210.f, 26.f), 12.f, ready ? amber() : warm(), FontStyleBold);
+
+    drawButton(g, R(66.f, H - 128.f, 210.f, 52.f), g_working ? L"WORKING..." : L"GENERATE", ActGenerate, true);
+    drawText(g, L"Pleiadian LoRA: not trained yet // this does NOT block base generation",
+             R(296.f, H - 118.f, W - 370.f, 34.f), 10.f, muted());
+}
+
+void drawLibrary(Graphics& g, float W, float H) {
+    drawText(g, L"LIBRARY", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
+    drawText(g, L"private local generations", R(44.f, 166.f, 320.f, 22.f), 11.f, muted());
+    drawButton(g, R(W - 200.f, 132.f, 150.f, 38.f), L"OPEN FOLDER", ActOpenLibrary);
+
+    const float x = 42.f;
+    const float y0 = 214.f;
+    const float w = W - 84.f;
+    if (g_library.empty()) {
+        roundRect(g, R(x, y0, w, 140.f), 22.f, panel(), Color(80, 92, 84, 68));
+        drawText(g, L"NO GENERATIONS YET", R(x + 22.f, y0 + 28.f, w - 44.f, 28.f), 15.f, warm(), FontStyleBold);
+        drawText(g, L"If Generate has never produced a file, check the ENGINE tab. The pretrained model should work before custom training.",
+                 R(x + 22.f, y0 + 66.f, w - 44.f, 52.f), 11.f, muted());
+        return;
+    }
+
+    const std::size_t count = std::min<std::size_t>(8, g_library.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        const float y = y0 + static_cast<float>(i) * 58.f;
+        RectF row = R(x, y, w, 48.f);
+        roundRect(g, row, 15.f, Color(242, 10, 10, 11), Color(65, 88, 82, 68));
+        drawText(g, g_library[i].filename().wstring(), R(x + 18.f, y + 7.f, w - 170.f, 22.f), 11.f, warm(), FontStyleBold);
+        drawText(g, L"click to load into now playing", R(x + 18.f, y + 27.f, w - 170.f, 16.f), 9.f, muted());
+        drawText(g, L"LOAD", R(x + w - 100.f, y + 12.f, 72.f, 22.f), 10.f, amber(), FontStyleBold, StringAlignmentFar);
+        addHit(row, ActLibraryBase + static_cast<int>(i));
+    }
+}
+
+void drawNowPlaying(Graphics& g, float W, float H) {
+    drawText(g, L"NOW PLAYING", R(42.f, 126.f, 330.f, 38.f), 27.f, warm(), FontStyleBold);
+    if (g_nowPlaying.empty()) {
+        drawText(g, L"nothing loaded", R(44.f, 174.f, 400.f, 26.f), 13.f, muted());
+        drawButton(g, R(42.f, 224.f, 160.f, 42.f), L"OPEN LIBRARY", ActTabLibrary, true);
+        return;
+    }
+
+    drawText(g, g_nowPlaying.filename().wstring(), R(44.f, 170.f, W - 88.f, 28.f), 14.f, amber(), FontStyleBold);
+    drawAnalyzer(g, R(42.f, 220.f, W - 84.f, H - 350.f), g_analysis);
+    drawButton(g, R(42.f, H - 104.f, 120.f, 42.f), L"PLAY", ActPlay, true);
+    drawButton(g, R(174.f, H - 104.f, 120.f, 42.f), L"STOP", ActStop);
+    drawButton(g, R(306.f, H - 104.f, 150.f, 42.f), L"OPEN LIBRARY", ActOpenLibrary);
+}
+
+void drawSongLab(Graphics& g, float W, float H) {
+    drawText(g, L"SONG LAB", R(42.f, 126.f, 300.f, 38.f), 27.f, warm(), FontStyleBold);
+    drawText(g, L"reference audio → EtherPlay FFT → measurable sound DNA", R(44.f, 166.f, 560.f, 22.f), 11.f, muted());
+    drawButton(g, R(W - 224.f, 132.f, 174.f, 38.f), L"CHOOSE AUDIO", ActChooseReference, true);
+
+    if (!g_reference.empty()) {
+        drawText(g, g_reference.filename().wstring(), R(44.f, 194.f, W - 88.f, 24.f), 11.f, amber(), FontStyleBold);
+    }
+    drawAnalyzer(g, R(42.f, 230.f, W - 84.f, H - 304.f), g_reference.empty() ? etherbeat::AudioAnalysis{} : g_analysis);
+}
+
+void drawEngine(Graphics& g, float W, float H) {
+    const bool installed = etherbeat::managed_ace_step_runtime_installed();
+    const bool ready = etherbeat::managed_ace_step_engine_ready();
+    drawText(g, L"ENGINE", R(42.f, 126.f, 260.f, 38.f), 27.f, warm(), FontStyleBold);
+    drawText(g, L"model health + local runtime diagnostics", R(44.f, 166.f, 430.f, 22.f), 11.f, muted());
+
+    RectF card = R(42.f, 216.f, W - 84.f, H - 286.f);
+    roundRect(g, card, 24.f, panel(), Color(88, 98, 89, 70));
+    drawText(g, L"FOUNDATION MODEL", R(card.X + 24.f, card.Y + 24.f, 260.f, 20.f), 10.f, amber(), FontStyleBold);
+    drawText(g, L"ACE-Step 1.5 // PRETRAINED", R(card.X + 24.f, card.Y + 54.f, 430.f, 32.f), 19.f, warm(), FontStyleBold);
+    drawText(g, L"PLEIADIAN ADAPTER", R(card.X + 24.f, card.Y + 112.f, 260.f, 20.f), 10.f, amber(), FontStyleBold);
+    drawText(g, L"NOT TRAINED YET", R(card.X + 24.f, card.Y + 142.f, 320.f, 28.f), 16.f, muted(), FontStyleBold);
+    drawText(g, L"That only means EtherBeat has not learned your private sound yet. It does NOT explain a total failure to generate. Base text-to-music should already work.",
+             R(card.X + 24.f, card.Y + 182.f, card.Width * .54f, 74.f), 11.f, muted());
+
+    const float sx = card.X + card.Width * .62f;
+    drawText(g, L"RUNTIME", R(sx, card.Y + 24.f, 160.f, 20.f), 10.f, amber(), FontStyleBold);
+    drawText(g, installed ? L"INSTALLED" : L"MISSING", R(sx, card.Y + 54.f, 220.f, 30.f), 17.f, installed ? warm() : Color(255, 235, 130, 120), FontStyleBold);
+    drawText(g, L"API", R(sx, card.Y + 112.f, 160.f, 20.f), 10.f, amber(), FontStyleBold);
+    drawText(g, ready ? L"ONLINE" : L"OFFLINE", R(sx, card.Y + 142.f, 220.f, 30.f), 17.f, ready ? Color(255, 176, 228, 156) : muted(), FontStyleBold);
+
+    drawButton(g, R(card.X + 24.f, card.GetBottom() - 62.f, 170.f, 40.f), L"START / CHECK", ActStartEngine, true);
+    drawButton(g, R(card.X + 208.f, card.GetBottom() - 62.f, 170.f, 40.f), L"OPEN RUNTIME", ActOpenRuntime);
+}
+
+void paint(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC dc = BeginPaint(hwnd, &ps);
+    Graphics g(dc);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    g.SetTextRenderingHint(TextRenderingHintAntiAliasGridFit);
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    const float W = static_cast<float>(client.right - client.left);
+    const float H = static_cast<float>(client.bottom - client.top);
+
+    g_hits.clear();
+    LinearGradientBrush bg(PointF(0.f, 0.f), PointF(W, H), Color(255, 3, 3, 4), Color(255, 13, 11, 8));
+    g.FillRectangle(&bg, 0.f, 0.f, W, H);
+
+    drawText(g, L"ETHERBEAT", R(34.f, 22.f, 300.f, 34.f), 25.f, warm(), FontStyleBold);
+    drawText(g, L"ALIEN WORKSHOP // LOCAL", R(36.f, 52.f, 280.f, 18.f), 9.f, muted(), FontStyleBold);
+    drawNav(g, W);
+
+    switch (g_screen) {
+    case Screen::Home: drawHome(g, W, H); break;
+    case Screen::Create: drawCreate(g, W, H); break;
+    case Screen::Library: drawLibrary(g, W, H); break;
+    case Screen::NowPlaying: drawNowPlaying(g, W, H); break;
+    case Screen::SongLab: drawSongLab(g, W, H); break;
+    case Screen::Engine: drawEngine(g, W, H); break;
+    }
+
+    drawText(g, g_status, R(36.f, H - 31.f, W - 72.f, 18.f), 9.f, muted());
+    EndPaint(hwnd, &ps);
+}
+
+void layoutEdits() {
+    if (!g_window) return;
+    RECT r{};
+    GetClientRect(g_window, &r);
+    const int W = r.right - r.left;
+    MoveWindow(g_prompt, 66, 256, std::max(420, W - 132), 210, TRUE);
+    MoveWindow(g_bpm, 66, 516, 106, 32, TRUE);
+    MoveWindow(g_key, 190, 516, 106, 32, TRUE);
+    MoveWindow(g_duration, 314, 516, 106, 32, TRUE);
+    MoveWindow(g_seed, 438, 516, 138, 32, TRUE);
+}
+
+HWND makeEdit(HWND parent, int id, const wchar_t* initial, DWORD extra = 0) {
+    HWND h = CreateWindowExW(0, L"EDIT", initial,
+        WS_CHILD | WS_TABSTOP | ES_LEFT | extra,
+        0, 0, 10, 10, parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_instance, nullptr);
+    SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(extra & ES_MULTILINE ? g_promptFont : g_uiFont), TRUE);
+    return h;
+}
+
+void createControls(HWND hwnd) {
+    g_prompt = makeEdit(hwnd, ID_PROMPT,
+        L"haunted 2016 cloud-rap instrumental, enormous negative space, cold purple chrome, submerged bass, beautifully degraded, lonely but arrogant",
+        ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_WANTRETURN);
+    g_bpm = makeEdit(hwnd, ID_BPM, L"68");
+    g_key = makeEdit(hwnd, ID_KEY, L"F# minor");
+    g_duration = makeEdit(hwnd, ID_DURATION, L"20");
+    g_seed = makeEdit(hwnd, ID_SEED, L"random");
+    layoutEdits();
+    showCreateControls(false);
+}
+
+void handleAction(int action) {
+    if (action >= ActLibraryBase && action < ActLibraryBase + 100) {
+        const std::size_t index = static_cast<std::size_t>(action - ActLibraryBase);
+        if (index < g_library.size()) {
+            g_nowPlaying = g_library[index];
+            g_analysis = etherbeat::analyze_audio_file(g_nowPlaying);
+            setScreen(Screen::NowPlaying);
+        }
+        return;
+    }
+
+    switch (action) {
+    case ActTabHome: setScreen(Screen::Home); break;
+    case ActTabCreate: setScreen(Screen::Create); break;
+    case ActTabLibrary: setScreen(Screen::Library); break;
+    case ActTabNowPlaying: setScreen(Screen::NowPlaying); break;
+    case ActTabSongLab: setScreen(Screen::SongLab); break;
+    case ActTabEngine: setScreen(Screen::Engine); break;
+    case ActGenerate: startGenerate(); break;
+    case ActChooseReference: {
+        const auto chosen = chooseAudio(g_window);
+        if (!chosen.empty()) {
+            g_reference = fs::path(chosen);
+            startReferenceAnalysis(g_reference);
+        }
+        break;
+    }
+    case ActOpenLibrary: {
+        const auto root = libraryRoot();
+        ShellExecuteW(g_window, L"open", root.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    }
+    case ActPlay: playPath(g_nowPlaying); break;
+    case ActStop: stopPlayback(); break;
+    case ActStartEngine: startEngineCheck(); break;
+    case ActOpenRuntime: {
+        const auto root = etherbeat::managed_ace_step_runtime_root();
+        std::error_code ec;
+        fs::create_directories(root, ec);
+        ShellExecuteW(g_window, L"open", root.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+    }
+    default: break;
+    }
+}
+
+LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_CREATE:
+        g_window = hwnd;
+        createControls(hwnd);
+        refreshLibrary();
+        return 0;
+    case WM_GETMINMAXINFO: {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        info->ptMinTrackSize.x = kMinWidth;
+        info->ptMinTrackSize.y = kMinHeight;
+        return 0;
+    }
+    case WM_SIZE:
+        layoutEdits();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    case WM_LBUTTONUP: {
+        const int x = GET_X_LPARAM(lParam);
+        const int y = GET_Y_LPARAM(lParam);
+        for (auto it = g_hits.rbegin(); it != g_hits.rend(); ++it) {
+            if (hit(it->rect, x, y)) {
+                handleAction(it->action);
+                break;
+            }
+        }
+        return 0;
+    }
+    case WM_CTLCOLOREDIT: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        SetTextColor(dc, RGB(244, 242, 235));
+        SetBkColor(dc, RGB(12, 12, 13));
+        return reinterpret_cast<LRESULT>(g_editBrush);
+    }
+    case WM_APP_WORK_DONE: {
+        WorkKind kind;
+        bool success;
+        std::wstring error;
+        fs::path artifact;
+        etherbeat::AudioAnalysis analysis;
+        std::uint64_t seed;
+        {
+            std::scoped_lock lock(g_resultMutex);
+            kind = g_pendingKind;
+            success = g_pendingSuccess;
+            error = g_pendingError;
+            artifact = g_pendingArtifact;
+            analysis = g_pendingAnalysis;
+            seed = g_pendingSeed;
+        }
+        g_working = false;
+
+        if (!success) {
+            setStatus(L"FAILED // " + error);
+            if (kind == WorkKind::Generate || kind == WorkKind::EngineCheck) setScreen(Screen::Engine);
+            MessageBoxW(hwnd, error.c_str(), L"ETHERBEAT ENGINE", MB_OK | MB_ICONERROR);
+            return 0;
+        }
+
+        if (kind == WorkKind::Generate) {
+            g_nowPlaying = artifact;
+            g_analysis = analysis;
+            SetWindowTextW(g_seed, std::to_wstring(seed).c_str());
+            refreshLibrary();
+            setStatus(L"CAPTURED // " + artifact.filename().wstring());
+            setScreen(Screen::NowPlaying);
+            playPath(g_nowPlaying);
+        } else if (kind == WorkKind::AnalyzeReference) {
+            g_analysis = analysis;
+            setStatus(L"SONG LAB // REFERENCE HEARD");
+            setScreen(Screen::SongLab);
+        } else if (kind == WorkKind::EngineCheck) {
+            setStatus(L"ENGINE // PRETRAINED MODEL API ONLINE");
+            setScreen(Screen::Engine);
+        }
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT:
+        paint(hwnd);
+        return 0;
+    case WM_DESTROY:
+        stopPlayback();
+        etherbeat::shutdown_managed_ace_step_engine();
+        PostQuitMessage(0);
+        return 0;
+    default:
+        break;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+} // namespace
+
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
+    g_instance = instance;
+
+    GdiplusStartupInput input;
+    if (GdiplusStartup(&g_gdiplus, &input, nullptr) != Ok) return 1;
+
+    g_uiFont = CreateFontW(-16, 0, 0, 0, FW_MEDIUM, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                           OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    g_promptFont = CreateFontW(-18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                               OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
+    g_editBrush = CreateSolidBrush(RGB(12, 12, 13));
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = windowProc;
+    wc.hInstance = instance;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    wc.lpszClassName = kWindowClass;
+    if (!RegisterClassExW(&wc)) return 1;
+
+    HWND hwnd = CreateWindowExW(0, kWindowClass, L"ETHERBEAT // Alien Workshop V0.2",
+        WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820,
+        nullptr, nullptr, instance, nullptr);
+    if (!hwnd) return 1;
+
+    BOOL dark = TRUE;
+    DwmSetWindowAttribute(hwnd, kImmersiveDarkModeAttribute, &dark, sizeof(dark));
+    ShowWindow(hwnd, showCommand);
+    UpdateWindow(hwnd);
+
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+
+    if (g_editBrush) DeleteObject(g_editBrush);
+    if (g_uiFont) DeleteObject(g_uiFont);
+    if (g_promptFont) DeleteObject(g_promptFont);
+    GdiplusShutdown(g_gdiplus);
+    return static_cast<int>(message.wParam);
+}

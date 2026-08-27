@@ -1,38 +1,66 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2A
+ETHERBEAT // ALIEN WORKSHOP V0.2B
 
-STUDIED FROM ETHERPLAY V0.38
-----------------------------
-EtherBeat now uses an EtherPlay-style navigation spine instead of one giant generator dashboard:
+UI ANCHOR
+---------
+EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
+NEW IN V0.2B // ETHERCOMPOSER V0.1
+---------------------------------
+CREATE no longer sends raw free-form text straight to the renderer.
+Every generation now passes through EtherComposer first.
+
+EtherComposer translates production language into a structured musical blueprint containing:
+- BPM and key lineage
+- energy
+- drum density
+- bass weight
+- transient density
+- vocal / negative space
+- texture grit
+- arrangement sections and bar counts
+
+Example intent:
+  haunted cloud-rap instrumental, enormous negative space,
+  submerged bass, beautifully degraded
+
+becomes a renderer-facing plan with sparse drums, larger vocal space,
+stronger low-end weighting, degraded texture and explicit song sections.
+
+The planner is deterministic and renderer-agnostic. ACE-Step receives the blueprint today;
+future JASCO / SongGeneration / other renderer providers can consume the same Composer layer
+without changing the EtherBeat UI or user workflow.
+
+PIPELINE
+--------
+  ETHERBEAT UI
+      -> ModelRouter
+      -> EtherComposer
+      -> structured renderer request
+      -> local model backend
+      -> generated audio
+      -> library / now playing / analyzer
+
 HOME
 - Shows foundation-model and engine state.
-- ACE-Step 1.5 is PRETRAINED. Custom Pleiadian training is NOT required for basic generation.
 
 CREATE
-- Real text-to-instrumental path through the managed local ACE-Step backend.
-- Prompt, BPM, key, duration and seed controls.
-- First Generate automatically provisions/wakes the local model runtime. No BAT or terminal is required.
+- Prompt, BPM, key, duration and seed controls remain anchored to the existing EtherBeat UI.
+- EtherComposer now plans the music before renderer invocation.
+- Real text-to-instrumental path remains routed through the managed local backend.
 
 LIBRARY
-- Scans EtherBeat's private local generated-audio library.
-- Click a generated track to send it to NOW PLAYING.
+- Private local generated-audio library.
 
 NOW PLAYING
-- Plays the generated audio inside EtherBeat.
-- Displays the native EtherPlay-derived 32-band frequency analysis for the generated result.
+- Local playback and EtherPlay-derived analyzer.
 
 SONG LAB
-- Choose WAV/MP3/FLAC reference audio.
-- Windows Media Foundation decodes the file and the native 1024-point Hann FFT analyzes its musical frequency DNA.
+- WAV/MP3/FLAC reference analysis through Windows Media Foundation + native FFT.
 
 ENGINE
-- Shows whether the runtime is installed and whether the local API is online.
-- START / CHECK explicitly validates/wakes the private model engine.
-- If generation fails, EtherBeat moves you here and surfaces the actual engine error instead of silently doing nothing.
-- Foundation model: ACE-Step 1.5 PRETRAINED.
-- Pleiadian adapter: NOT TRAINED YET. That affects private style/taste, not whether base generation functions.
+- Runtime/API diagnostics and managed local-model lifecycle.
 
 LOCAL DATA
 ----------
@@ -42,14 +70,10 @@ Runtime:
 Generated library:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
-FIRST GENERATION NOTE
----------------------
-A local Udio-class workflow needs large model files. The first generation can require a substantial one-time download/model initialization. Later launches reuse the local runtime. EtherBeat owns this machinery and no visible server window is required.
-
 CURRENT LIMITS
 --------------
-- Text-to-instrumental is the real generation path.
-- Reference analysis is real.
-- Reference-conditioned generation / Extend / Variation still need dedicated ACE-Step repaint/cover mappings.
+- EtherComposer V0.1 is rule-based and inspectable; a learned planner can replace/augment it later.
+- Text-to-instrumental remains the active generation path.
+- Reference-conditioned generation / Extend / Variation still need dedicated control mappings.
 - Detailed byte-level model-download progress is not yet exposed in the UI.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

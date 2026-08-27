@@ -1,8 +1,10 @@
 #include "etherbeat/EtherComposer.hpp"
+#include "etherbeat/EtherDNA.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/ModelRouter.hpp"
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,13 +14,47 @@
 int main() {
     const std::filesystem::path output = "etherbeat-test-output";
     std::filesystem::remove_all(output);
+    std::filesystem::create_directories(output);
 
     try {
+        const std::filesystem::path referenceAudio = output / "reference.wav";
+
+        etherbeat::AudioAnalysis analysis;
+        analysis.ready = true;
+        analysis.sample_rate = 48000;
+        analysis.channels = 2;
+        analysis.analyzed_windows = 1444;
+        analysis.duration_seconds = 20.0;
+        analysis.energy = 0.42f;
+        analysis.bass = 0.82f;
+        analysis.mid = 0.48f;
+        analysis.treble = 0.19f;
+        analysis.beat_peak = 0.31f;
+        for (std::size_t i = 0; i < analysis.spectrum.size(); ++i) {
+            analysis.spectrum[i] = static_cast<float>(i + 1) / static_cast<float>(analysis.spectrum.size());
+        }
+
+        const auto dna = etherbeat::make_ether_dna(referenceAudio, analysis);
+        const auto dnaPath = etherbeat::ether_dna_sidecar_path(referenceAudio);
+        if (!etherbeat::save_ether_dna(dna, dnaPath)) {
+            std::cerr << "EtherDNA sidecar could not be written\n";
+            return 1;
+        }
+
+        const auto loaded = etherbeat::load_ether_dna_for_audio(referenceAudio);
+        if (!loaded || loaded->schema != "etherbeat.dna.v1" || loaded->sample_rate != 48000 ||
+            std::abs(loaded->bass - 0.82f) > 0.001f || loaded->low_end_weight <= 0.65f ||
+            loaded->conditioning_summary().find("reference DNA") == std::string::npos) {
+            std::cerr << "EtherDNA round-trip lost measurable audio identity\n";
+            return 1;
+        }
+
         etherbeat::GenerationRequest composerRequest;
         composerRequest.prompt = "haunted cloud-rap instrumental, enormous negative space, submerged bass, beautifully degraded";
         composerRequest.duration_seconds = 20.0;
         composerRequest.bpm = 68.0;
         composerRequest.key = "F# minor";
+        composerRequest.reference_audio = referenceAudio;
 
         etherbeat::EtherComposer composer;
         const auto plan = composer.compose(composerRequest);
@@ -28,8 +64,9 @@ int main() {
         }
         if (plan.sections.size() < 4 ||
             plan.renderer_prompt.find("Composition blueprint") == std::string::npos ||
-            plan.renderer_prompt.find("Avoid festival-style EDM") == std::string::npos) {
-            std::cerr << "EtherComposer blueprint is incomplete\n";
+            plan.renderer_prompt.find("Avoid festival-style EDM") == std::string::npos ||
+            plan.renderer_prompt.find("Measured reference DNA") == std::string::npos) {
+            std::cerr << "EtherComposer blueprint is missing EtherDNA conditioning\n";
             return 1;
         }
 

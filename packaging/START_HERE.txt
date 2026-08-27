@@ -1,150 +1,192 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2S
+ETHERBEAT // ALIEN WORKSHOP V0.2T
 
-UI ANCHOR
----------
-EtherBeat keeps the EtherPlay-derived navigation spine intact:
+PURPOSE OF THIS BUILD
+---------------------
+V0.2T freezes new creative architecture and fixes the first-run critical path.
+
+Previous EtherBeat builds could compile the producer stack while the actual ACE-Step runtime/model remained missing. A localhost /health response was also treated too loosely as ENGINE READY even when the model itself had not been initialized.
+
+V0.2T changes the acceptance rule:
+
+  ETHERBEAT.exe
+      -> INSTALL / VERIFY
+      -> runtime verified/downloaded
+      -> runtime extracted
+      -> localhost API started
+      -> primary DiT model initialized/downloaded
+      -> real 10-second generation self-test
+      -> WAV exists and is non-empty
+      -> /health confirms models_initialized=true
+      -> READY
+
+READY now means a real inference path was proven on the machine running EtherBeat. API-online alone is not READY.
+
+ENGINE STATE MACHINE
+--------------------
+The HOME and ENGINE screens now expose these explicit states:
+
+  RUNTIME_MISSING
+  RUNTIME_DOWNLOADING
+  RUNTIME_EXTRACTING
+  RUNTIME_READY
+  API_STARTING
+  API_ONLINE
+  MODEL_MISSING
+  MODEL_DOWNLOADING
+  MODEL_LOADING
+  WARMUP_SELF_TEST
+  READY
+  FAILED
+
+The UI also separately reports:
+- runtime installed / missing
+- local API online / offline
+- DiT model loaded / files present / not ready
+- real warmup WAV verified / pending
+- current provisioning detail or exact error
+- provisioning progress
+- server log location
+
+INSTALL / VERIFY
+----------------
+The old START / CHECK action is now a real bootstrap operation.
+
+On a fresh compatible Windows machine it attempts to:
+1. locate an existing compatible ACE-Step runtime
+2. otherwise download the official ACE-Step 1.5 Windows portable archive
+3. extract it under EtherBeat's private runtime directory
+4. locate api_server.py and embedded Python
+5. start the local ACE API at 127.0.0.1:8001
+6. query /health
+7. initialize/download acestep-v15-turbo through /v1/init when supported
+8. fall back to documented lazy model initialization for older API builds if needed
+9. submit a real 10-second instrumental generation
+10. verify that a WAV was actually written
+11. verify /health reports models_initialized=true
+12. set READY only after all of those gates succeed
+
+RUNTIME LOCATION
+----------------
+EtherBeat-owned runtime:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
+
+Server log:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime\logs\ace-server.log
+
+Warmup output:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime\warmup\
+
+The ENGINE button OPEN RUNTIME / LOGS opens the runtime folder so the log can be inspected when a machine-specific startup/model failure occurs.
+
+PORTABLE PYTHON COMPATIBILITY
+-----------------------------
+Runtime detection accepts all of these layouts:
+
+  python_embedded\python.exe
+  python_embeded\python.exe
+  .venv\Scripts\python.exe
+
+The second spelling intentionally supports historical ACE portable packages that used python_embeded while launch scripts/documentation expected python_embedded.
+
+MODEL BOOTSTRAP
+---------------
+V0.2T intentionally provisions the primary DiT model first:
+
+  acestep-v15-turbo
+
+The LLM planning layer is disabled during bootstrap. EtherBeat only declares the base music engine READY after real text-to-instrumental inference succeeds. Future features can initialize additional model roles independently rather than making first launch depend on every optional model.
+
+REAL WARMUP ACCEPTANCE
+----------------------
+The readiness self-test is a deterministic 10-second instrumental request:
+- simple neutral instrumental pulse
+- no vocals
+- 72 BPM
+- A minor
+- fixed seed
+
+The resulting file must exist and contain audio bytes. After generation, ACE /health must also report that its model is initialized.
+
+This is deliberately stronger than:
+
+  process exists
+  API returned HTTP 200
+
+because neither condition proves the model can generate audio.
+
+FAILURE BEHAVIOR
+----------------
+FAILED is an explicit engine state.
+
+Errors now identify the failed layer whenever possible, including:
+- runtime download failure
+- archive unexpectedly small
+- extraction failure
+- embedded Python/api_server.py not found
+- API process exited during startup
+- localhost API timeout
+- model initialization HTTP/error response
+- warmup generation failure
+- warmup WAV missing/empty
+- health still reports models_initialized=false
+
+ACE server stdout/stderr are written to ace-server.log instead of disappearing inside a hidden CreateProcess window.
+
+WHAT V0.2T DOES NOT CLAIM
+-------------------------
+GitHub Actions cannot reasonably download/load the heavyweight local ACE model and run GPU inference during this project build.
+
+CI therefore proves:
+- portable provisioning state logic
+- Windows/MSVC compilation of the real downloader/API/model-init/warmup code path
+- native V0.2T provisioner UI compilation
+- all existing EtherBeat core tests
+
+CI does NOT prove that a specific end-user Windows GPU/driver/network environment can complete the large first-run model download and inference.
+
+The final device acceptance test is now intentionally performed by the V0.2T EXE itself:
+
+  INSTALL / VERIFY -> READY
+
+If it fails, the displayed state/error plus runtime\logs\ace-server.log are the debugging source. Do not treat FAILED as READY and do not continue adding creative engine layers until that machine-specific issue is fixed.
+
+PRESERVED PRODUCER STACK
+------------------------
+V0.2T keeps the existing EtherBeat V0.2 producer architecture intact:
+
+  EtherComposer
+  EtherSearch x4
+  EtherDNA
+  EtherCritic
+  EtherPromote
+  EtherControl
+  EtherVersions
+  EtherCompare
+  EtherTimeline
+  EtherSections
+  EtherArrangement
+  EtherAssemble
+  EtherSeam
+
+The UI anchor remains:
 
   home | create | library | now playing | song lab | engine
 
-V0.2S evolves V0.2R's physical EtherAssemble path rather than redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare, EtherTimeline, EtherSections, EtherArrangement and EtherAssemble remain intact; EtherSeam adds measurable boundary quality analysis and adaptive section joins.
-
-NEW IN V0.2S // ETHERSEAM V0.1
-------------------------------
-Before EtherAssemble joins two normalized PCM sections, EtherSeam analyzes the outgoing tail and incoming head.
-
-A seam score is reported from 0.0 to 1.0:
-
-  0.0 = low discontinuity / nearly continuous boundary
-  1.0 = high discontinuity risk
-
-This score is NOT a music-quality rating. It answers only: how abrupt is this particular audio join likely to be?
-
-MEASURED HEADS
---------------
-EtherSeam V0.1 combines five deterministic DSP heads:
-
-RMS JUMP
-  Difference in boundary-window loudness.
-
-SPECTRAL JUMP
-  Difference between normalized 8-point Goertzel spectral signatures across the boundary.
-
-DC JUMP
-  Difference in short-window mean sample value / offset.
-
-TRANSIENT COLLISION
-  Difference and overlap in boundary derivative/transient activity.
-
-SAMPLE JUMP
-  Instantaneous last-sample -> first-sample discontinuity proxy.
-
-Default weighting:
-
-  RMS                 22%
-  spectral            30%
-  DC                  14%
-  transient collision 20%
-  sample jump         14%
-
-ADAPTIVE CROSSFADE
-------------------
-V0.2R used one fixed 20 ms crossfade for every join.
-
-V0.2S chooses a fade separately for each measured boundary:
-
-  clean seam  -> near 5 ms
-  rough seam  -> progressively longer
-  high-risk   -> up to 100 ms
-
-The mapping is bounded and deterministic. EtherAssemble still supports the old fixed-crossfade mode for testing/comparison, and the core can accept up to 250 ms if a later producer UI exposes manual seam tuning.
-
-SEVERE SEAMS
-------------
-The default severe-risk threshold is:
-
-  seam_score >= 0.82
-
-V0.2S records and surfaces severe seams but does not automatically destroy/reject the assembly. The core includes an optional reject_severe_seams mode for future strict rendering workflows.
-
-VISIBLE STATUS
---------------
-The existing ASSEMBLE SONG card now identifies:
-
-  ETHERSEAM // ADAPTIVE 5-100ms // DSP JOIN SCORE
-
-After assembly, NOW PLAYING status reports:
-- slot count
-- average seam risk
-- maximum seam risk
-- severe seam count
-- assembled duration
-
-ASSEMBLY MANIFEST V2
---------------------
-Every assembled WAV still receives:
-
-  <audio>.etherassemble.json
-
-Schema is now:
-
-  etherbeat.assemble.v2
-
-In addition to V0.2R lineage data, each incoming slot records:
-- seam_analyzed
-- seam_score
-- rms_jump
-- spectral_jump
-- dc_jump
-- transient_collision
-- sample_jump
-- applied_crossfade_seconds
-- severe_seam
-
-Top-level summary adds:
-- adaptive_seams
-- average_seam_score
-- max_seam_score
-- severe_seam_count
-
-The first arrangement slot has no incoming boundary, so its seam fields remain zero/unmeasured.
-
-CURRENT ASSEMBLY FLOW
----------------------
-ArrangementPlan
-    -> resolve SOURCE / DUPLICATE / +ALT
-    -> normalize sample rate + channel layout
-    -> for each boundary:
-         EtherSeam
-           -> RMS jump
-           -> spectral jump
-           -> DC jump
-           -> transient collision
-           -> sample jump
-           -> seam score
-           -> recommended fade
-    -> adaptive crossfade
-    -> PCM16 WAV
-    -> EtherDNA
-    -> EtherVersions child
-    -> NOW PLAYING
-
-PLACEHOLDER BOUNDARY
---------------------
-+ALT placeholder material remains independently generated through the Quality provider. EtherSeam can now measure and smooth the resulting boundary, but V0.2S does not pretend this is neighboring-waveform-conditioned generation.
+No creative subsystem was removed or redesigned for the provisioner pass.
 
 TEST COVERAGE
 -------------
-V0.2S adds EtherSeam coverage for:
-- identical/clean boundary scoring
-- harsh tonal/spectral boundary scoring
-- DC/sample discontinuity scoring
-- recommended fade increases with seam risk
-- severe threshold behavior
-- format mismatch rejection
-- adaptive seam integration inside EtherAssemble
-- per-slot applied crossfade persistence
-- assembly manifest v2 seam fields
-- fixed-crossfade fallback remains available
+V0.2T adds the 14th smoke suite for provisioning-state semantics:
+- missing runtime state
+- runtime-ready state
+- model-missing state
+- model-loading state
+- warmup state
+- READY invariant
+- FAILED/state-name contract
 
 All previous suites remain active:
 - Core
@@ -160,25 +202,8 @@ All previous suites remain active:
 - EtherArrangement
 - EtherAssemble
 - EtherSeam
+- Engine Provisioning
 
-Windows/MSVC compiles the complete native shell plus Media Foundation decoder.
-Ubuntu/GCC validates the portable DSP seam engine and complete core stack.
-
-CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners. Real +ALT inference happens on the user's configured local runtime.
-
-CURRENT LIMITS
---------------
-- EtherSeam V0.1 uses compact deterministic DSP proxies rather than a learned perceptual transition model.
-- Goertzel spectral comparison uses eight frequency anchors, not a future full perceptual embedding.
-- Adaptive fades smooth discontinuities but cannot repair a musically incompatible independently generated +ALT section.
-- Context-conditioned in-between generation / neighboring-waveform continuation remains a later renderer step.
-- Sample-rate conversion remains linear V0.1 resampling rather than a high-order production resampler.
-- EtherSections still begins from an energy-transition heuristic rather than a learned semantic section classifier.
-- EtherTimeline remains a 128-bin time-energy envelope rather than sample-resolution waveform peaks.
-- Playback/seek still uses MCI millisecond positioning.
-- Extend remains intentionally blocked until continuation behavior is separately validated.
-- SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
-- EtherCritic remains DSP-derived; learned semantic/taste heads come later.
-- Pleiadian taste adaptation is not trained yet.
-- Dedicated Vocal provider is not wired yet.
-- No private corpus, vocals, LoRAs, checkpoints or training data ship in this public package.
+CURRENT PRODUCT RULE
+--------------------
+Until INSTALL / VERIFY reaches READY on the target PC, EtherBeat's creative architecture is considered present but the local generation engine is not accepted as operational.

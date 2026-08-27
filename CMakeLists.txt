@@ -20,6 +20,11 @@ add_library(etherbeat_core STATIC
     src/backends/MockWaveBackend.cpp
 )
 
+if(WIN32)
+    target_sources(etherbeat_core PRIVATE src/win32/AceStepApiBackend.cpp)
+    target_link_libraries(etherbeat_core PUBLIC winhttp)
+endif()
+
 target_include_directories(etherbeat_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -51,7 +56,6 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
         src/win32/EtherBeatWin.cpp
         src/win32/AudioAnalysisWin.cpp
-        src/win32/AceStepApiBackend.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(EtherBeat PRIVATE
@@ -60,7 +64,6 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
         mfplat
         mfreadwrite
         mfuuid
-        winhttp
         comdlg32
         shell32
         gdiplus

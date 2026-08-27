@@ -1,23 +1,24 @@
-ETHERBEAT // ALIEN WORKSHOP V0.1C
+ETHERBEAT // ALIEN WORKSHOP V0.1D
 
 ONE APP. NO SERVER BAT.
 -----------------------
 Run ETHERBEAT.exe.
 
 There is no SETUP_ACE_STEP.bat and no START_ACE_STEP.bat in this package.
-EtherBeat now owns the local model runtime itself.
+EtherBeat owns the local model runtime itself.
 
 WHAT HAPPENS AUTOMATICALLY
 --------------------------
-1. REFERENCE still analyzes WAV/MP3 locally with Windows Media Foundation + the native 1024-point Hann FFT.
-2. When GENERATE needs the AI engine, EtherBeat checks 127.0.0.1:8001 internally.
+1. REFERENCE analyzes WAV/MP3 locally with Windows Media Foundation + the native 1024-point Hann FFT.
+2. When GENERATE needs the AI engine, EtherBeat checks its localhost engine internally.
 3. If the model runtime is missing, EtherBeat downloads the official ACE-Step Windows portable runtime into:
    %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
 4. EtherBeat extracts the runtime using Windows' built-in tar.exe.
 5. EtherBeat launches ACE-Step's embedded Python API invisibly with CREATE_NO_WINDOW.
 6. The engine is attached to an EtherBeat-owned Windows Job Object using KILL_ON_JOB_CLOSE.
 7. Close EtherBeat and its managed model-process tree is terminated automatically.
-8. Generated WAV files and .etherbeat.json lineage are saved in generated/ beside the app's working directory.
+8. Runtime provisioning and model generation execute away from the UI while EtherBeat keeps pumping Windows messages, so the app remains paintable/responsive instead of becoming a dead server wrapper.
+9. Generated WAV files and .etherbeat.json lineage are saved in generated/.
 
 FIRST REAL GENERATION
 ---------------------
@@ -28,10 +29,10 @@ FIRST REAL GENERATION
 5. The first generation requires internet access and substantial disk space because the local runtime/model files must be acquired. Later launches reuse the private runtime automatically.
 6. Press OPEN OUTPUT after completion.
 
-IMPORTANT V0.1C LIMITS
+IMPORTANT V0.1D LIMITS
 ----------------------
 - Text-to-instrumental is the real ACE-Step model path.
-- Reference audio analysis is real; reference-conditioned generation / Extend / Variation still need their dedicated ACE-Step mappings.
-- The local model is large. A truly local Udio-class workflow cannot make multi-GB model weights disappear; V0.1C removes the MANUAL runtime/server ceremony instead.
-- Generation is still synchronous in this build. Background generation with live progress is the next UI/runtime pass.
+- Reference audio analysis is real; reference-conditioned generation / Extend / Variation still need dedicated ACE-Step mappings.
+- The local model is large. A truly local Udio-class workflow cannot make multi-GB model weights disappear; V0.1D removes the manual install/server ceremony and owns that complexity inside EtherBeat.
+- The UI remains responsive during engine work, but a detailed download/model progress meter is not implemented yet.
 - No private corpus, vocals, LoRAs, checkpoints, or training data are included in this ZIP or public repository.

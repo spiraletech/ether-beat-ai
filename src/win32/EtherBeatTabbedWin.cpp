@@ -4,6 +4,7 @@
 
 #include "etherbeat/AudioAnalysis.hpp"
 #include "etherbeat/AceStepEngineManager.hpp"
+#include "etherbeat/EtherSearch.hpp"
 #include "etherbeat/GenerationTypes.hpp"
 #include "etherbeat/ModelRouter.hpp"
 
@@ -23,6 +24,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -295,14 +297,39 @@ void startGenerate() {
     request.mode = etherbeat::GenerationMode::TextToInstrumental;
 
     const bool installed = etherbeat::managed_ace_step_runtime_installed();
-    setStatus(installed ? L"GENERATING // waking local pretrained model..." : L"FIRST RUN // acquiring private model runtime automatically...");
+    setStatus(installed
+        ? L"ETHERSEARCH x4 // generating drafts, measuring DNA, ranking..."
+        : L"FIRST RUN // acquiring private model runtime, then EtherSearch x4...");
 
     std::thread([request] {
         try {
-            etherbeat::ModelRouter router{etherbeat::make_default_backend()};
-            const auto artifact = router.generate(request, libraryRoot());
-            const auto analysis = etherbeat::analyze_audio_file(artifact.audio_path);
-            postWork(WorkKind::Generate, true, L"", artifact.audio_path, analysis, artifact.resolved_seed);
+            auto router = etherbeat::make_default_router();
+            etherbeat::EtherSearch search;
+            const auto result = search.run(
+                router,
+                request,
+                libraryRoot(),
+                [](const fs::path& audio) {
+                    return etherbeat::analyze_audio_file(audio);
+                },
+                etherbeat::SearchOptions{
+                    .draft = etherbeat::DraftOptions{.candidate_count = 4, .continue_after_failure = true},
+                    .critic = etherbeat::CriticWeights{}
+                });
+
+            if (!result.has_winner() || result.winner_audio_path.empty()) {
+                throw std::runtime_error(
+                    "EtherSearch produced no analyzable winner. Candidate files and search manifests remain in the local library for diagnostics.");
+            }
+
+            const auto analysis = etherbeat::analyze_audio_file(result.winner_audio_path);
+            postWork(
+                WorkKind::Generate,
+                true,
+                L"",
+                result.winner_audio_path,
+                analysis,
+                result.winner_seed);
         } catch (const std::exception& e) {
             postWork(WorkKind::Generate, false, wide(e.what()), {}, {}, 0);
         }
@@ -434,7 +461,7 @@ void drawHome(Graphics& g, float W, float H) {
 
 void drawCreate(Graphics& g, float W, float H) {
     drawText(g, L"CREATE", R(42.f, 126.f, 250.f, 38.f), 27.f, warm(), FontStyleBold);
-    drawText(g, L"text → instrumental // real pretrained local model path", R(44.f, 166.f, 520.f, 24.f), 11.f, muted());
+    drawText(g, L"text → 4 drafts → EtherDNA → critic ranking → promoted winner", R(44.f, 166.f, 650.f, 24.f), 11.f, muted());
 
     roundRect(g, R(42.f, 208.f, W - 84.f, H - 278.f), 24.f, panel(), Color(85, 98, 89, 70));
     drawText(g, L"SYNESTHESIA / PRODUCTION LANGUAGE", R(66.f, 226.f, 430.f, 22.f), 10.f, amber(), FontStyleBold);
@@ -449,8 +476,8 @@ void drawCreate(Graphics& g, float W, float H) {
     drawText(g, ready ? L"ACE 1.5 ONLINE" : (installed ? L"ACE 1.5 LOCAL" : L"FIRST RUN SETUP"),
              R(W - 345.f, 514.f, 210.f, 26.f), 12.f, ready ? amber() : warm(), FontStyleBold);
 
-    drawButton(g, R(66.f, H - 128.f, 210.f, 52.f), g_working ? L"WORKING..." : L"GENERATE", ActGenerate, true);
-    drawText(g, L"Pleiadian LoRA: not trained yet // this does NOT block base generation",
+    drawButton(g, R(66.f, H - 128.f, 210.f, 52.f), g_working ? L"SEARCHING..." : L"SEARCH x4", ActGenerate, true);
+    drawText(g, L"EtherSearch keeps all candidates locally and promotes the highest measured match",
              R(296.f, H - 118.f, W - 370.f, 34.f), 10.f, muted());
 }
 
@@ -708,7 +735,7 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             g_analysis = analysis;
             SetWindowTextW(g_seed, std::to_wstring(seed).c_str());
             refreshLibrary();
-            setStatus(L"CAPTURED // " + artifact.filename().wstring());
+            setStatus(L"ETHERSEARCH WINNER // " + artifact.filename().wstring());
             setScreen(Screen::NowPlaying);
             playPath(g_nowPlaying);
         } else if (kind == WorkKind::AnalyzeReference) {

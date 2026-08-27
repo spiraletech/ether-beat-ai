@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2R
+ETHERBEAT // ALIEN WORKSHOP V0.2S
 
 UI ANCHOR
 ---------
@@ -6,122 +6,145 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2R evolves the V0.2Q arrangement workspace instead of redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare, EtherTimeline, EtherSections and EtherArrangement remain intact; EtherAssemble turns the persistent arrangement graph into a real new WAV.
+V0.2S evolves V0.2R's physical EtherAssemble path rather than redesigning the shell. Search, EtherControl, EtherVersions, EtherCompare, EtherTimeline, EtherSections, EtherArrangement and EtherAssemble remain intact; EtherSeam adds measurable boundary quality analysis and adaptive section joins.
 
-NEW IN V0.2R // ETHERASSEMBLE V0.1
-----------------------------------
-NOW PLAYING adds:
+NEW IN V0.2S // ETHERSEAM V0.1
+------------------------------
+Before EtherAssemble joins two normalized PCM sections, EtherSeam analyzes the outgoing tail and incoming head.
 
-  ASSEMBLE SONG
+A seam score is reported from 0.0 to 1.0:
 
-The action resolves the current EtherArrangement plan slot by slot and writes a physical PCM16 WAV under:
+  0.0 = low discontinuity / nearly continuous boundary
+  1.0 = high discontinuity risk
 
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\assembled\<source>\
+This score is NOT a music-quality rating. It answers only: how abrupt is this particular audio join likely to be?
 
-SOURCE + DUPLICATE SLOTS
-------------------------
-Source-backed slots are decoded from the parent song through Windows Media Foundation. EtherAssemble slices the exact stored source start/end range.
+MEASURED HEADS
+--------------
+EtherSeam V0.1 combines five deterministic DSP heads:
 
-Duplicate slots therefore reuse the same measured source audio rather than regenerating it.
+RMS JUMP
+  Difference in boundary-window loudness.
 
-PLACEHOLDER SLOTS
------------------
-A +ALT / placeholder slot has no source timestamps. During ASSEMBLE SONG, V0.2R resolves it through the existing Quality provider role using:
-- placeholder instruction
-- expected section duration inferred from same-kind source sections when available
-- current BPM/key
-- current producer direction
-- full arrangement blueprint
+SPECTRAL JUMP
+  Difference between normalized 8-point Goertzel spectral signatures across the boundary.
 
-The generated fragment is then decoded and inserted into the arrangement.
+DC JUMP
+  Difference in short-window mean sample value / offset.
 
-IMPORTANT: V0.2R placeholder generation is an independent Quality section render. It is not yet neighboring-waveform-conditioned continuation. The manifest marks placeholder material as generated rather than pretending it came from the parent song.
+TRANSIENT COLLISION
+  Difference and overlap in boundary derivative/transient activity.
 
-PCM FORMAT NORMALIZATION
-------------------------
-EtherAssemble works on normalized interleaved float PCM internally.
+SAMPLE JUMP
+  Instantaneous last-sample -> first-sample discontinuity proxy.
 
-The parent track establishes the output format when source-backed slots exist. Generated fragments are converted to match it with:
-- channel-layout conversion
-- linear sample-rate conversion
+Default weighting:
 
-This allows, for example, a 44.1 kHz source and a 48 kHz generated fragment to coexist in one final render.
+  RMS                 22%
+  spectral            30%
+  DC                  14%
+  transient collision 20%
+  sample jump         14%
 
-CROSSFADE ASSEMBLY
+ADAPTIVE CROSSFADE
 ------------------
-V0.2R applies a bounded 20 ms linear crossfade at section joins.
+V0.2R used one fixed 20 ms crossfade for every join.
 
-The final render is written as PCM16 RIFF/WAVE. No source file is overwritten.
+V0.2S chooses a fade separately for each measured boundary:
 
-ASSEMBLY MANIFEST
------------------
-Each assembled WAV receives:
+  clean seam  -> near 5 ms
+  rough seam  -> progressively longer
+  high-risk   -> up to 100 ms
+
+The mapping is bounded and deterministic. EtherAssemble still supports the old fixed-crossfade mode for testing/comparison, and the core can accept up to 250 ms if a later producer UI exposes manual seam tuning.
+
+SEVERE SEAMS
+------------
+The default severe-risk threshold is:
+
+  seam_score >= 0.82
+
+V0.2S records and surfaces severe seams but does not automatically destroy/reject the assembly. The core includes an optional reject_severe_seams mode for future strict rendering workflows.
+
+VISIBLE STATUS
+--------------
+The existing ASSEMBLE SONG card now identifies:
+
+  ETHERSEAM // ADAPTIVE 5-100ms // DSP JOIN SCORE
+
+After assembly, NOW PLAYING status reports:
+- slot count
+- average seam risk
+- maximum seam risk
+- severe seam count
+- assembled duration
+
+ASSEMBLY MANIFEST V2
+--------------------
+Every assembled WAV still receives:
 
   <audio>.etherassemble.json
 
-Schema:
+Schema is now:
 
-  etherbeat.assemble.v1
+  etherbeat.assemble.v2
 
-The manifest records:
-- parent source audio
-- arrangement revision
-- output path
-- sample rate / channels / duration
-- crossfade setting
-- slot ID / label / origin
-- whether each slot was generated
-- each slot input duration
-- each slot output start/end timing
+In addition to V0.2R lineage data, each incoming slot records:
+- seam_analyzed
+- seam_score
+- rms_jump
+- spectral_jump
+- dc_jump
+- transient_collision
+- sample_jump
+- applied_crossfade_seconds
+- severe_seam
 
-POST-RENDER PIPELINE
---------------------
-After the WAV is written:
+Top-level summary adds:
+- adaptive_seams
+- average_seam_score
+- max_seam_score
+- severe_seam_count
 
-  assembled WAV
-      -> native audio analysis
-      -> EtherDNA sidecar
-      -> EtherVersions.register_child(parent, assembled)
-      -> operation = arrangement_assemble
-      -> Library refresh
-      -> NOW PLAYING
+The first arrangement slot has no incoming boundary, so its seam fields remain zero/unmeasured.
 
-The original song, arrangement plan and all prior versions remain untouched.
-
-CURRENT PRODUCER FLOW
+CURRENT ASSEMBLY FLOW
 ---------------------
-CREATE:
-  EtherComposer
-      -> EtherSearch x4
-      -> EtherDNA
-      -> EtherCritic
-      -> EtherPromote
-      -> NOW PLAYING
+ArrangementPlan
+    -> resolve SOURCE / DUPLICATE / +ALT
+    -> normalize sample rate + channel layout
+    -> for each boundary:
+         EtherSeam
+           -> RMS jump
+           -> spectral jump
+           -> DC jump
+           -> transient collision
+           -> sample jump
+           -> seam score
+           -> recommended fade
+    -> adaptive crossfade
+    -> PCM16 WAV
+    -> EtherDNA
+    -> EtherVersions child
+    -> NOW PLAYING
 
-STRUCTURE:
-  EtherTimeline
-      -> EtherSections
-      -> EtherArrangement
-          -> duplicate / reorder / +ALT / delete slot
-          -> ASSEMBLE SONG
-          -> EtherAssemble
-          -> real WAV
-          -> EtherDNA
-          -> EtherVersions child
+PLACEHOLDER BOUNDARY
+--------------------
++ALT placeholder material remains independently generated through the Quality provider. EtherSeam can now measure and smooth the resulting boundary, but V0.2S does not pretend this is neighboring-waveform-conditioned generation.
 
 TEST COVERAGE
 -------------
-V0.2R adds EtherAssemble coverage for:
-- source section slicing
-- duplicate source reuse
-- generated placeholder resolution
-- source decoded once per render
-- bounded crossfade timing
-- PCM16 RIFF output
-- assembly manifest persistence
-- unresolved-placeholder rejection
-- 44.1 kHz -> 48 kHz normalization
-- placeholder-only arrangement rendering
+V0.2S adds EtherSeam coverage for:
+- identical/clean boundary scoring
+- harsh tonal/spectral boundary scoring
+- DC/sample discontinuity scoring
+- recommended fade increases with seam risk
+- severe threshold behavior
+- format mismatch rejection
+- adaptive seam integration inside EtherAssemble
+- per-slot applied crossfade persistence
+- assembly manifest v2 seam fields
+- fixed-crossfade fallback remains available
 
 All previous suites remain active:
 - Core
@@ -136,18 +159,21 @@ All previous suites remain active:
 - EtherSections
 - EtherArrangement
 - EtherAssemble
+- EtherSeam
 
-Windows/MSVC compiles the complete Assemble -> Arrangement -> Sections -> Timeline -> Compare native shell plus Media Foundation PCM decoder.
-Ubuntu/GCC validates portable PCM assembly and the complete core suite.
+Windows/MSVC compiles the complete native shell plus Media Foundation decoder.
+Ubuntu/GCC validates the portable DSP seam engine and complete core stack.
 
-CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners. Provider request/routing code is compiled and tested; real placeholder inference happens on the user's configured local runtime.
+CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners. Real +ALT inference happens on the user's configured local runtime.
 
 CURRENT LIMITS
 --------------
-- Placeholder material is independently generated in V0.2R; context-conditioned in-between generation/cross-section continuation comes later.
-- Crossfades are fixed at 20 ms in the current UI; the core accepts 0-250 ms.
-- Sample-rate conversion is linear V0.1 resampling, not a future high-order production resampler.
-- EtherSections still begins from an energy-transition structural heuristic rather than a learned semantic section classifier.
+- EtherSeam V0.1 uses compact deterministic DSP proxies rather than a learned perceptual transition model.
+- Goertzel spectral comparison uses eight frequency anchors, not a future full perceptual embedding.
+- Adaptive fades smooth discontinuities but cannot repair a musically incompatible independently generated +ALT section.
+- Context-conditioned in-between generation / neighboring-waveform continuation remains a later renderer step.
+- Sample-rate conversion remains linear V0.1 resampling rather than a high-order production resampler.
+- EtherSections still begins from an energy-transition heuristic rather than a learned semantic section classifier.
 - EtherTimeline remains a 128-bin time-energy envelope rather than sample-resolution waveform peaks.
 - Playback/seek still uses MCI millisecond positioning.
 - Extend remains intentionally blocked until continuation behavior is separately validated.

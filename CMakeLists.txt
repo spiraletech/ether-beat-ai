@@ -21,8 +21,12 @@ add_library(etherbeat_core STATIC
 )
 
 if(WIN32)
-    target_sources(etherbeat_core PRIVATE src/win32/AceStepApiBackend.cpp)
-    target_link_libraries(etherbeat_core PUBLIC winhttp)
+    target_sources(etherbeat_core PRIVATE
+        src/win32/AceStepApiBackend.cpp
+        src/win32/AceStepEngineManager.cpp
+        src/win32/ManagedAceStepBackend.cpp
+    )
+    target_link_libraries(etherbeat_core PUBLIC winhttp shell32 ole32)
 endif()
 
 target_include_directories(etherbeat_core

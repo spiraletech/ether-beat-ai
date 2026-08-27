@@ -14,6 +14,7 @@ public:
     AceStepApiBackend(std::wstring host = L"127.0.0.1", std::uint16_t port = 8001);
 
     [[nodiscard]] std::string_view name() const noexcept override;
+    [[nodiscard]] ProviderCapabilities capabilities() const noexcept override;
 
     GenerationArtifact generate(
         const GenerationRequest& request,

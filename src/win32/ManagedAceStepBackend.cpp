@@ -22,7 +22,7 @@ void pump_windows_messages(bool& quitSeen) {
             quitSeen = true;
             continue;
         }
-        TranslateMessageW(&message);
+        TranslateMessage(&message);
         DispatchMessageW(&message);
     }
 }

@@ -1,4 +1,5 @@
 #include "etherbeat/EtherComposer.hpp"
+#include "etherbeat/EtherDNA.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -194,6 +195,14 @@ CompositionPlan EtherComposer::compose(const GenerationRequest& request) const {
              << "texture " << texture_label(plan.texture_grit) << "; "
              << "arrangement " << section_string(plan) << ". "
              << "Preserve a coherent motif across sections; evolve arrangement without random genre switching.";
+
+    if (!request.reference_audio.empty()) {
+        if (const auto dna = load_ether_dna_for_audio(request.reference_audio)) {
+            renderer << " Measured " << dna->conditioning_summary()
+                     << ". Treat these measurements as reference identity targets, not as genre labels.";
+            add_tag(plan, "etherdna-reference");
+        }
+    }
 
     if (std::find(plan.tags.begin(), plan.tags.end(), "cloud-rap") != plan.tags.end() &&
         !has_any(prompt, {"edm", "dance", "festival", "house", "techno"})) {

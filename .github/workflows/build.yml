@@ -33,13 +33,11 @@ jobs:
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/ETHERBEAT.exe package/ETHERBEAT.exe
           Copy-Item packaging/START_HERE.txt package/START_HERE.txt
-          Copy-Item packaging/SETUP_ACE_STEP.bat package/SETUP_ACE_STEP.bat
-          Copy-Item packaging/START_ACE_STEP.bat package/START_ACE_STEP.bat
 
       - name: Upload Windows test ZIP
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ETHERBEAT-Windows-x64-V0.1B
+          name: ETHERBEAT-Windows-x64-V0.1C
           path: package/
           if-no-files-found: error

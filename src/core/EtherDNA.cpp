@@ -2,8 +2,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 #include <string>
 
@@ -12,6 +14,11 @@ namespace {
 
 float clamp01(float value) {
     return std::clamp(value, 0.0f, 1.0f);
+}
+
+std::string path_utf8(const std::filesystem::path& path) {
+    const auto bytes = path.u8string();
+    return std::string(reinterpret_cast<const char*>(bytes.data()), bytes.size());
 }
 
 std::string escape_json(const std::string& value) {
@@ -161,7 +168,7 @@ bool save_ether_dna(const EtherDNA& dna, const std::filesystem::path& path) noex
         out << std::fixed << std::setprecision(6);
         out << "{\n";
         out << "  \"schema\": \"" << escape_json(dna.schema) << "\",\n";
-        out << "  \"source_audio\": \"" << escape_json(dna.source_audio.u8string()) << "\",\n";
+        out << "  \"source_audio\": \"" << escape_json(path_utf8(dna.source_audio)) << "\",\n";
         out << "  \"sample_rate\": " << dna.sample_rate << ",\n";
         out << "  \"channels\": " << dna.channels << ",\n";
         out << "  \"analyzed_windows\": " << dna.analyzed_windows << ",\n";

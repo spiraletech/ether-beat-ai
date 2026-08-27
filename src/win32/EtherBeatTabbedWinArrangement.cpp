@@ -243,6 +243,7 @@ LRESULT CALLBACK arrangementWindowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
 
 } // namespace
 
+#ifndef ETHERBEAT_ARRANGEMENT_EMBEDDED
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     g_instance = instance;
 
@@ -289,3 +290,4 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     GdiplusShutdown(g_gdiplus);
     return static_cast<int>(message.wParam);
 }
+#endif

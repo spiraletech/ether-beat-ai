@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -58,7 +58,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatWin.cpp
+        src/win32/EtherBeatTabbedWin.cpp
         src/win32/AudioAnalysisWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -72,6 +72,7 @@ if(WIN32 AND ETHERBEAT_BUILD_WIN32)
         shell32
         gdiplus
         dwmapi
+        winmm
     )
     target_compile_definitions(EtherBeat PRIVATE UNICODE _UNICODE NOMINMAX)
     set_target_properties(EtherBeat PROPERTIES OUTPUT_NAME "ETHERBEAT")

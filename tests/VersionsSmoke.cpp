@@ -1,8 +1,13 @@
 #include "etherbeat/EtherVersions.hpp"
+#include "etherbeat/GenerationTypes.hpp"
+#include "etherbeat/IModelBackend.hpp"
+#include "etherbeat/ModelRouter.hpp"
+#include "etherbeat/ProviderTypes.hpp"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 
 namespace fs = std::filesystem;
@@ -18,6 +23,31 @@ void touch(const fs::path& path) {
     std::ofstream out(path, std::ios::binary);
     out << "RIFFetherbeat";
 }
+
+class VersionControlBackend final : public etherbeat::IModelBackend {
+public:
+    [[nodiscard]] std::string_view name() const noexcept override {
+        return "versions-control-test";
+    }
+
+    [[nodiscard]] etherbeat::ProviderCapabilities capabilities() const noexcept override {
+        return etherbeat::capability(etherbeat::ProviderCapability::Variation)
+            | etherbeat::ProviderCapability::ReferenceAudio
+            | etherbeat::ProviderCapability::ControlRole;
+    }
+
+    etherbeat::GenerationArtifact generate(
+        const etherbeat::GenerationRequest&,
+        const fs::path& output_directory) override {
+        const auto audio = output_directory / "router-child.wav";
+        touch(audio);
+        return etherbeat::GenerationArtifact{
+            .audio_path = audio,
+            .backend_name = std::string{name()},
+            .resolved_seed = 4242
+        };
+    }
+};
 
 } // namespace
 
@@ -78,6 +108,34 @@ int main() {
                 "variation sidecar missing");
         require(fs::exists(etherbeat::EtherVersions::sidecar_path(repaint)),
                 "repaint sidecar missing");
+
+        // Router integration: successful source-conditioned control renders must
+        // register lineage automatically, independent of the Win32 UI.
+        const auto router_source = root / "router-source.wav";
+        touch(router_source);
+        etherbeat::ModelRouter router;
+        router.add_provider(std::make_unique<VersionControlBackend>(), 100);
+
+        etherbeat::GenerationRequest request;
+        request.prompt = "make a darker sibling version";
+        request.mode = etherbeat::GenerationMode::Variation;
+        request.render_intent = etherbeat::RenderIntent::Control;
+        request.reference_audio = router_source;
+        request.duration_seconds = 10.0;
+
+        const auto artifact = router.generate(request, root / "control" / "router-source");
+        require(fs::exists(artifact.audio_path), "router control artifact missing");
+        require(fs::exists(etherbeat::EtherVersions::sidecar_path(router_source)),
+                "router did not register source root sidecar");
+        require(fs::exists(etherbeat::EtherVersions::sidecar_path(artifact.audio_path)),
+                "router did not register child sidecar");
+
+        auto router_lineage = versions.lineage_for_audio(artifact.audio_path);
+        require(router_lineage.parent.has_value(), "router child parent missing");
+        require(router_lineage.parent->audio_path == router_source,
+                "router child parent path mismatch");
+        require(router_lineage.current.operation == "variation",
+                "router child operation was not persisted");
 
         fs::remove_all(root, ec);
         std::cout << "EtherVersions smoke passed\n";

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.16
+    VERSION 0.2.17
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -25,6 +25,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherTimeline.cpp
     src/core/EtherSections.cpp
     src/core/EtherArrangement.cpp
+    src/core/EtherAssemble.cpp
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
@@ -43,15 +44,9 @@ if(WIN32)
     target_link_libraries(etherbeat_core PUBLIC winhttp shell32 ole32)
 endif()
 
-target_include_directories(etherbeat_core
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+target_include_directories(etherbeat_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-target_compile_definitions(etherbeat_core
-    PUBLIC
-        ETHERBEAT_VERSION="${PROJECT_VERSION}"
-)
+target_compile_definitions(etherbeat_core PUBLIC ETHERBEAT_VERSION="${PROJECT_VERSION}")
 
 if(MSVC)
     target_compile_options(etherbeat_core PRIVATE /W4 /permissive- /utf-8)
@@ -62,7 +57,6 @@ endif()
 if(ETHERBEAT_BUILD_CLI)
     add_executable(etherbeat src/main.cpp)
     target_link_libraries(etherbeat PRIVATE etherbeat_core)
-
     if(MSVC)
         target_compile_options(etherbeat PRIVATE /W4 /permissive- /utf-8)
     else()
@@ -72,8 +66,9 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWinArrangement.cpp
+        src/win32/EtherBeatTabbedWinAssemble.cpp
         src/win32/AudioAnalysisWin.cpp
+        src/win32/AudioDecodeWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(EtherBeat PRIVATE
@@ -147,29 +142,25 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_arrangement_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_arrangement_smoke COMMAND etherbeat_arrangement_smoke)
 
+    add_executable(etherbeat_assemble_smoke tests/AssembleSmoke.cpp)
+    target_link_libraries(etherbeat_assemble_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_assemble_smoke COMMAND etherbeat_assemble_smoke)
+
     if(MSVC)
-        target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_auto_promote_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_control_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_ace_control_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_control_ui_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_versions_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_compare_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_timeline_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_sections_smoke PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(etherbeat_arrangement_smoke PRIVATE /W4 /permissive- /utf-8)
+        foreach(test_target IN ITEMS
+            etherbeat_core_smoke etherbeat_search_smoke etherbeat_auto_promote_smoke
+            etherbeat_control_smoke etherbeat_ace_control_smoke etherbeat_control_ui_smoke
+            etherbeat_versions_smoke etherbeat_compare_smoke etherbeat_timeline_smoke
+            etherbeat_sections_smoke etherbeat_arrangement_smoke etherbeat_assemble_smoke)
+            target_compile_options(${test_target} PRIVATE /W4 /permissive- /utf-8)
+        endforeach()
     else()
-        target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_auto_promote_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_ace_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_control_ui_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_versions_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_compare_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_timeline_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_sections_smoke PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(etherbeat_arrangement_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        foreach(test_target IN ITEMS
+            etherbeat_core_smoke etherbeat_search_smoke etherbeat_auto_promote_smoke
+            etherbeat_control_smoke etherbeat_ace_control_smoke etherbeat_control_ui_smoke
+            etherbeat_versions_smoke etherbeat_compare_smoke etherbeat_timeline_smoke
+            etherbeat_sections_smoke etherbeat_arrangement_smoke etherbeat_assemble_smoke)
+            target_compile_options(${test_target} PRIVATE -Wall -Wextra -Wpedantic)
+        endforeach()
     endif()
 endif()

@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2N
+ETHERBEAT // ALIEN WORKSHOP V0.2O
 
 UI ANCHOR
 ---------
@@ -6,120 +6,124 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-V0.2N evolves the V0.2M NOW PLAYING workspace instead of redesigning the product shell. EtherVersions remains the persistent branch graph; EtherCompare adds synchronized A/B audition plus measurable branch-difference readout.
+V0.2O evolves the V0.2N NOW PLAYING workspace instead of redesigning the shell. Search, EtherControl, EtherVersions and EtherCompare stay intact; EtherTimeline adds visual region selection for source-audio repaint.
 
-NEW IN V0.2N // ETHERCOMPARE V0.1
---------------------------------
-NOW PLAYING keeps:
-- EtherPlay-derived analyzer
-- EtherControl Variation / Replace Section
-- EtherVersions PARENT / CHILD / HEAD / PROMOTE
+NEW IN V0.2O // ETHERTIMELINE V0.1
+----------------------------------
+NOW PLAYING adds a real audio-derived timeline strip inside the analyzer workspace.
 
-It adds:
-- A audition button
-- B audition button
-- A/B SYNCHRONIZED toggle
-- automatic B-target selection
-- EtherDNA similarity
-- low-end delta
-- brightness delta
-- rhythmic-activity delta
-- energy delta
+The timeline displays:
+- a normalized 128-bin time-energy envelope
+- the current repaint selection
+- start/end time labels
+- the current playback position
+- explicit A-source status while EtherCompare B is being auditioned
 
-A / B MODEL
------------
-A is always the currently selected EtherVersions node shown in NOW PLAYING.
-Auditioning B does not change A, does not move HEAD, and does not rewrite lineage.
+The envelope is not decorative. Media Foundation collects per-window RMS energy during the existing 1024-sample FFT/decode pass, then compresses those measurements into 128 left-to-right bins. No second audio decode is required.
 
-B is selected deterministically from the most relevant alternate version:
-1. promoted HEAD when A is not HEAD
-2. next sibling when A already is HEAD and siblings exist
-3. direct child when A is a root with children
-4. parent as a fallback
+DRAG TO SELECT
+--------------
+Drag directly across the EtherTimeline waveform to select the source region that Replace Section should repaint.
 
-This keeps comparison immediate without requiring a second file picker.
+Example:
 
-SYNCHRONIZED AUDITION
+  [---- waveform ----[ SELECTED ]---- waveform ----]
+                       0:08.20 -> 0:16.75
+
+The selection immediately updates the existing START and END precision fields in EtherControl.
+Pressing REPLACE SECTION therefore uses the same typed GenerationRequest / ACE repaint path that V0.2K+ already validated.
+
+The numeric START / END boxes remain available for exact manual adjustment.
+
+SELECTION SEMANTICS
+-------------------
+EtherTimeline V0.1 owns selection math outside Win32.
+
+It provides:
+- normalized drag -> seconds conversion
+- reversed-drag handling
+- duration clamping
+- out-of-range clamping
+- minimum 0.25-second edit region
+- normalized playhead conversion
+
+This keeps timeline semantics reusable when EtherBeat eventually replaces MCI/Win32 playback.
+
+COMPARE SAFETY
+--------------
+EtherCompare keeps A as the selected EtherVersions node and B as the audition-only alternate.
+
+The timeline always edits A.
+If B is currently being auditioned, the timeline explicitly reports:
+
+  B AUDITIONING, EDIT SOURCE REMAINS A
+
+Dragging the timeline while listening to B never silently changes the repaint source to B.
+
+REAL PLAYHEAD
+-------------
+The timeline polls the existing MCI playback position and draws a live playhead across the selected A-source timeline.
+A lightweight UI timer invalidates only the timeline region while NOW PLAYING is active.
+
+ANALYSIS ENVELOPE
+-----------------
+AudioAnalysis now includes:
+
+  timeline_envelope[128]
+
+The Windows Media Foundation analyzer records each FFT window's RMS energy and builds a normalized envelope from average + local peak energy. Existing EtherDNA spectrum and critic measurements remain unchanged.
+
+UI ARCHITECTURE
+---------------
+V0.2O deliberately wraps the proven V0.2N shell instead of copying/replacing all of it.
+
+  V0.2N Compare shell
+        +
+  EtherTimeline paint/input wrapper
+        =
+  V0.2O
+
+This preserves the previous shell as a clean rollback point and makes timeline behavior additive.
+
+CURRENT PRODUCER FLOW
 ---------------------
-EtherBeat queries the current MCI playback position in milliseconds before switching A/B.
-The alternate audio is opened and seeks to the same timeline position before playback resumes.
+CREATE:
+  EtherComposer
+      -> EtherSearch x4
+      -> EtherDNA
+      -> EtherCritic
+      -> EtherPromote
+      -> NOW PLAYING
 
-Typical flow:
+CONTROL / TIMELINE:
+  NOW PLAYING A source
+      -> drag EtherTimeline region
+      -> START / END update
+      -> producer instruction
+      -> REPLACE SECTION
+      -> ModelRouter
+      -> ACE repaint
+      -> EtherVersions child
+      -> EtherCompare A/B
 
-  A playing at 00:42.350
-      -> A/B SYNCHRONIZED
-  B opens
-      -> seek 00:42.350
-      -> play
-
-Switching back repeats the same process in the opposite direction.
-
-The selected EtherVersions node remains A while B is being auditioned.
-
-ETHERDNA DIFFERENCE VIEW
-------------------------
-EtherCompare V0.1 is a portable core module. It compares two persisted EtherDNA objects and reports measurable deltas.
-
-Current display includes:
-- DNA preservation similarity percentage
-- delta low-end weight
-- delta brightness
-- delta rhythmic activity
-- delta energy
-
-The core also computes:
-- bass delta
-- mid delta
-- treble delta
-- beat-peak delta
-- darkness delta
-- spectral-center delta
-- 32-band spectrum RMSE
-
-IMPORTANT: EtherCompare similarity means measured audio-identity preservation. It is NOT a subjective "better song" score. EtherCritic and future taste/semantic heads remain separate responsibilities.
-
-VERSION + COMPARE FLOW
-----------------------
-  ORIGINAL
-     -> VARIATION A
-     -> VARIATION B [HEAD]
-
-While A is selected:
-  A = VARIATION A
-  B = HEAD / VARIATION B
-
-  A/B SYNCHRONIZED
-      -> audition B at the same playback position
-      -> audition A at the same playback position
-      -> inspect EtherDNA deltas
-      -> PROMOTE only if the user chooses
-
-No compare action deletes branches or moves HEAD.
-
-CORE API
---------
-EtherCompare adds:
-- compare_ether_dna(a, b)
-- compare_audio_dna(a_path, b_path)
-- EtherCompareResult
-- EtherCompareDelta
-
-The comparison core is provider-independent and UI-independent.
+VERSION + COMPARE:
+  PARENT / CHILD / HEAD / PROMOTE
+      +
+  synchronized A/B audition
+      +
+  EtherDNA difference readout
 
 TEST COVERAGE
 -------------
-The new EtherCompare smoke test verifies:
-- identical DNA produces 1.0 measured similarity
-- identical spectrum produces zero RMSE
-- changed DNA remains normalized
-- energy delta sign
-- low-end delta sign
-- brightness delta sign
-- darkness delta sign
-- rhythmic delta sign
-- spectrum change detection
+V0.2O adds EtherTimeline smoke coverage for:
+- normal drag mapping
+- reversed drag mapping
+- normalized clamping
+- minimum-width expansion
+- duration-edge selection
+- normalized playhead position
 
-All previous tests remain active:
+All previous suites remain active:
 - Core
 - EtherSearch
 - AutoPromote
@@ -127,11 +131,13 @@ All previous tests remain active:
 - ACE Control
 - Control UI
 - EtherVersions
+- EtherCompare
+- EtherTimeline
 
-The V0.2N native Windows shell compiles under MSVC with MCI position query, seek and A/B actions wired.
-Ubuntu/GCC validates the portable comparison math.
+Windows/MSVC compiles the native timeline wrapper plus the real Media Foundation envelope path.
+Ubuntu/GCC validates portable timeline selection semantics and the rest of the core stack.
 
-CI does not run heavyweight ACE model inference because local model/runtime weights are not installed on GitHub runners.
+CI does not run heavyweight ACE inference because local model/runtime weights are not installed on GitHub runners.
 
 LOCAL DATA
 ----------
@@ -155,9 +161,9 @@ Version HEAD records:
 
 CURRENT LIMITS
 --------------
-- Synchronized A/B is based on MCI millisecond seek; sample-accurate phase-locked dual-engine switching comes later with a dedicated playback engine.
-- The comparison panel shows a compact subset of EtherCompare metrics; full spectra/overlay visualization can be added later.
-- Extend remains intentionally blocked until continuation behavior is separately validated.
+- EtherTimeline V0.1 visualizes a real time-energy envelope, not full sample-resolution waveform peaks yet.
+- Timeline playback/seek still uses MCI millisecond positioning; sample-accurate playback comes later with the EtherPlay playback engine.
+- Region selection currently drives Replace Section; Extend remains intentionally blocked until continuation behavior is separately validated.
 - ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
 - EtherCritic remains DSP-derived; learned semantic/taste heads come later.

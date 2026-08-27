@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2G
+ETHERBEAT // ALIEN WORKSHOP V0.2H
 
 UI ANCHOR
 ---------
@@ -6,81 +6,107 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-NEW IN V0.2G // ETHERSEARCH V0.1
--------------------------------
-CREATE is now connected to the multi-candidate engine stack instead of the old one-shot generation path.
+NEW IN V0.2H // ETHERPROMOTE V0.1
+--------------------------------
+EtherSearch no longer stops at the Critic-selected draft.
 
-Pressing SEARCH x4 performs:
+The default CREATE pipeline is now:
 
   source prompt
       -> EtherComposer
       -> EtherDraft x4
-      -> Provider Router
+      -> Provider Router / Draft role
       -> four local candidate audio files
-      -> native EtherPlay-derived FFT analysis on each candidate
-      -> EtherDNA sidecar persistence
+      -> native EtherPlay-derived FFT analysis
+      -> EtherDNA sidecars
       -> EtherCritic ranking
-      -> promoted winner
-      -> Now Playing
+      -> Critic-selected draft winner
+      -> EtherPromote
+      -> Provider Router / Quality role
+      -> final Quality render
+      -> final audio analysis + EtherDNA
+      -> NOW PLAYING
 
-All candidate audio remains in the private local Library. EtherSearch does not delete the alternates after choosing a winner.
+The original winning draft and all alternates remain preserved. The Quality render is written into a separate promoted/<search-id>/ directory so identical seed naming cannot overwrite the draft that earned promotion.
 
-ETHERSEARCH CONTRACT
---------------------
-EtherSearch V0.1 is renderer-agnostic orchestration above EtherDraft and EtherCritic.
+ETHERPROMOTE CONTRACT
+---------------------
+V0.1 promotes only a measured Search winner.
 
-For every candidate it preserves distinct state for:
-- generation success/failure
-- audio path / seed lineage
-- analyzer success/failure
-- EtherDNA persistence
+Requirements:
+- EtherSearch must have a Critic winner
+- the winning draft must have a persisted EtherDNA sidecar
+- a provider must advertise the Quality role
+- the final Quality render must be analyzable
+- final EtherDNA must persist successfully
 
-A candidate can therefore generate successfully but fail analysis without being mislabeled as a model-generation failure.
+If the winning draft has no DNA, EtherPromote refuses to invent a preservation target.
 
-If analysis fails, the candidate remains in the batch and diagnostics, but EtherCritic will not invent a score for it.
+CURRENT ACE LIMIT
+-----------------
+The current ACE-Step provider advertises TextToInstrumental + Draft + Quality, but not reference-audio conditioning.
 
-SEARCH MANIFEST
----------------
-Each search writes:
+Therefore V0.1 Quality promotion does NOT pretend to preserve the draft waveform directly.
+Instead it locks:
+- Critic-selected candidate lineage
+- winning seed
+- original Composer intent
+- measured winning EtherDNA target
 
-  <draft-batch-id>.ethersearch.json
+The measured DNA summary is injected into the Quality request with explicit preservation instructions.
+A future Control/reference-capable provider can upgrade this same contract to direct audio-conditioned promotion without replacing the EtherBeat UI or Search architecture.
 
-The search manifest links:
-- schema etherbeat.search.v1
-- search / draft batch ID
-- EtherDraft manifest
-- EtherCritic manifest
-- candidate count
-- analyzed candidate count
-- persisted DNA count
-- promoted winner candidate index
-- winner seed / audio path
-- per-candidate generation/analysis/DNA state
-- analyzer error notes
+DNA PRESERVATION CHECK
+----------------------
+The Quality render is analyzed again after generation.
+EtherPromote compares source-winner DNA against final-render DNA across:
+- energy
+- low-end weight
+- rhythmic activity
+- brightness
+- spectral center
 
-The linked files now form a complete local lineage graph:
+The resulting 0..1 preservation score is stored in the promotion manifest.
+This gives EtherBeat a measurable way to detect when a supposed fidelity upgrade drifted away from the musical identity that actually won the search.
 
-  .etherdraft.json
-      -> candidate WAVs
-      -> .etherdna.json sidecars
-      -> .ethercritic.json
-      -> .ethersearch.json
+PROMOTION MANIFEST
+------------------
+Each promotion writes:
 
-LIVE CREATE FLOW
-----------------
-The existing EtherBeat CREATE screen remains the UI anchor.
-Its main action now reads SEARCH x4.
+  <search-id>-quality.etherpromote.json
 
-The current live behavior is:
-- build four Draft-intent candidates
-- analyze all successful candidates automatically
-- persist EtherDNA
-- rank candidates against EtherComposer numeric intent
-- promote the highest measured candidate
-- open that winner in NOW PLAYING
-- leave every alternate in LIBRARY
+It records:
+- schema etherbeat.promote.v1
+- source candidate index / seed / audio path
+- source DNA availability
+- Quality provider lineage
+- Quality generation state
+- Quality analysis state
+- Quality DNA persistence
+- final Quality audio / metadata paths
+- DNA preservation score
+- explicit error state
 
-If no candidate can be measured well enough to produce a Critic winner, EtherSearch reports failure while retaining candidate files/manifests for diagnostics.
+ETHERSEARCH V0.1 + PROMOTION
+----------------------------
+EtherSearch now preserves two winner concepts:
+
+  draft_winner_*
+      = the candidate EtherCritic actually selected
+
+  winner_*
+      = the final artifact exposed to the UI
+
+With default settings, winner_* becomes the promoted Quality render when EtherPromote succeeds.
+If Quality promotion fails, the measured draft winner remains available and all promotion diagnostics persist instead of deleting the successful Search result.
+
+The search manifest now also links:
+- draft winner candidate / seed / path
+- quality_promoted state
+- promotion manifest path
+- Quality DNA preservation score
+- promotion error
+- final winner path / seed
 
 ENGINE STACK
 ------------
@@ -88,34 +114,43 @@ ENGINE STACK
       -> EtherComposer V0.1
       -> EtherSearch V0.1
           -> EtherDraft V0.1
-              -> Provider Router V0.1
+              -> Draft provider
               -> candidate A / B / C / D
           -> native audio analyzer
           -> EtherDNA V0.1
           -> EtherCritic V0.1
-          -> promoted winner
-      -> NOW PLAYING / LIBRARY
+          -> draft winner
+          -> EtherPromote V0.1
+              -> Quality provider
+              -> final render
+              -> final EtherDNA
+              -> preservation score
+      -> NOW PLAYING
 
-TESTED ETHERSEARCH CONTRACT
----------------------------
-A dedicated portable search smoke test generates four candidates using the mock Draft provider.
-Three receive successful synthetic audio analysis and EtherDNA; one deliberately fails analysis.
+TESTED CONTRACT
+---------------
+Portable tests now verify both explicit and default promotion paths.
 
-The test verifies:
-- four draft candidates survive the batch
-- three analyzed candidates persist three DNA sidecars
-- analyzer failure remains candidate-local
-- EtherCritic receives the measured candidates
-- candidate 2 is promoted as the expected winner
-- failed-analysis candidate remains unscored
-- Draft, Critic and Search manifests all persist
-- Windows/MSVC and Ubuntu/GCC run the same orchestration assertions
+Tests prove:
+- four candidates are generated and analyzed
+- Critic selects the intended candidate
+- winner seed is preserved into the Quality request
+- Quality request carries render_intent = quality
+- winning DNA measurements are injected into the Quality prompt
+- promoted audio is physically separate from its draft source
+- final audio receives fresh EtherDNA
+- promotion manifest persists
+- DNA preservation score remains high for a controlled matching render
+- EtherSearch's default call path automatically performs the Quality pass
+- Windows/MSVC and Ubuntu/GCC execute the same promotion assertions
 
-CURRENT LIVE PROVIDER
----------------------
-ACE-Step remains the current local text-to-instrumental provider and advertises Draft + Quality capability.
-Because no separate fast Draft model is installed yet, SEARCH x4 currently invokes the same local foundation renderer four times sequentially.
-This is architecturally correct but can be slower than the future dedicated Draft path.
+LIVE CREATE FLOW
+----------------
+The existing V0.2 EtherBeat CREATE UI remains the visual anchor.
+Its current SEARCH x4 call uses EtherSearch defaults, so Quality promotion is now automatically enabled underneath the existing screen.
+
+NOW PLAYING receives the final promoted Quality render when promotion succeeds.
+All Draft candidates and their DNA/manifests remain under the local library lineage.
 
 LOCAL DATA
 ----------
@@ -125,12 +160,15 @@ Runtime:
 Generated library / search lineage:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
+Quality promotion renders:
+  %LOCALAPPDATA%\EtherTech\EtherBeat\library\promoted\<search-id>\
+
 CURRENT LIMITS
 --------------
-- EtherSearch V0.1 generates candidates sequentially; provider-native batching/parallel inference comes later.
-- The promoted Draft winner is not yet re-rendered through a dedicated final Quality pass.
-- EtherCritic V0.1 uses deterministic DSP-derived EtherDNA only.
-- Learned CLAP/MERT-style semantic scoring is a later critic head.
+- ACE-Step is still both the live Draft and Quality provider, so V0.2H uses the same foundation renderer for both roles.
+- SEARCH x4 is sequential until provider-native batching / a dedicated fast Draft engine is wired.
+- ACE does not yet advertise direct reference-audio conditioning in EtherBeat; true waveform-locked promotion awaits a Control-capable provider.
+- EtherCritic remains DSP-derived; learned CLAP/MERT-style semantic heads are later.
 - Pleiadian/user taste weighting is not trained yet.
-- Dedicated Control and Vocal providers are not wired yet.
+- Dedicated Vocal provider is not wired yet.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

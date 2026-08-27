@@ -1,0 +1,209 @@
+ETHERBEAT // ALIEN WORKSHOP V0.2T
+
+PURPOSE OF THIS BUILD
+---------------------
+V0.2T freezes new creative architecture and fixes the first-run critical path.
+
+Previous EtherBeat builds could compile the producer stack while the actual ACE-Step runtime/model remained missing. A localhost /health response was also treated too loosely as ENGINE READY even when the model itself had not been initialized.
+
+V0.2T changes the acceptance rule:
+
+  ETHERBEAT.exe
+      -> INSTALL / VERIFY
+      -> runtime verified/downloaded
+      -> runtime extracted
+      -> localhost API started
+      -> primary DiT model initialized/downloaded
+      -> real 10-second generation self-test
+      -> WAV exists and is non-empty
+      -> /health confirms models_initialized=true
+      -> READY
+
+READY now means a real inference path was proven on the machine running EtherBeat. API-online alone is not READY.
+
+ENGINE STATE MACHINE
+--------------------
+The HOME and ENGINE screens now expose these explicit states:
+
+  RUNTIME_MISSING
+  RUNTIME_DOWNLOADING
+  RUNTIME_EXTRACTING
+  RUNTIME_READY
+  API_STARTING
+  API_ONLINE
+  MODEL_MISSING
+  MODEL_DOWNLOADING
+  MODEL_LOADING
+  WARMUP_SELF_TEST
+  READY
+  FAILED
+
+The UI also separately reports:
+- runtime installed / missing
+- local API online / offline
+- DiT model loaded / files present / not ready
+- real warmup WAV verified / pending
+- current provisioning detail or exact error
+- provisioning progress
+- server log location
+
+INSTALL / VERIFY
+----------------
+The old START / CHECK action is now a real bootstrap operation.
+
+On a fresh compatible Windows machine it attempts to:
+1. locate an existing compatible ACE-Step runtime
+2. otherwise download the official ACE-Step 1.5 Windows portable archive
+3. extract it under EtherBeat's private runtime directory
+4. locate api_server.py and embedded Python
+5. start the local ACE API at 127.0.0.1:8001
+6. query /health
+7. initialize/download acestep-v15-turbo through /v1/init when supported
+8. fall back to documented lazy model initialization for older API builds if needed
+9. submit a real 10-second instrumental generation
+10. verify that a WAV was actually written
+11. verify /health reports models_initialized=true
+12. set READY only after all of those gates succeed
+
+RUNTIME LOCATION
+----------------
+EtherBeat-owned runtime:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
+
+Server log:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime\logs\ace-server.log
+
+Warmup output:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\runtime\warmup\
+
+The ENGINE button OPEN RUNTIME / LOGS opens the runtime folder so the log can be inspected when a machine-specific startup/model failure occurs.
+
+PORTABLE PYTHON COMPATIBILITY
+-----------------------------
+Runtime detection accepts all of these layouts:
+
+  python_embedded\python.exe
+  python_embeded\python.exe
+  .venv\Scripts\python.exe
+
+The second spelling intentionally supports historical ACE portable packages that used python_embeded while launch scripts/documentation expected python_embedded.
+
+MODEL BOOTSTRAP
+---------------
+V0.2T intentionally provisions the primary DiT model first:
+
+  acestep-v15-turbo
+
+The LLM planning layer is disabled during bootstrap. EtherBeat only declares the base music engine READY after real text-to-instrumental inference succeeds. Future features can initialize additional model roles independently rather than making first launch depend on every optional model.
+
+REAL WARMUP ACCEPTANCE
+----------------------
+The readiness self-test is a deterministic 10-second instrumental request:
+- simple neutral instrumental pulse
+- no vocals
+- 72 BPM
+- A minor
+- fixed seed
+
+The resulting file must exist and contain audio bytes. After generation, ACE /health must also report that its model is initialized.
+
+This is deliberately stronger than:
+
+  process exists
+  API returned HTTP 200
+
+because neither condition proves the model can generate audio.
+
+FAILURE BEHAVIOR
+----------------
+FAILED is an explicit engine state.
+
+Errors now identify the failed layer whenever possible, including:
+- runtime download failure
+- archive unexpectedly small
+- extraction failure
+- embedded Python/api_server.py not found
+- API process exited during startup
+- localhost API timeout
+- model initialization HTTP/error response
+- warmup generation failure
+- warmup WAV missing/empty
+- health still reports models_initialized=false
+
+ACE server stdout/stderr are written to ace-server.log instead of disappearing inside a hidden CreateProcess window.
+
+WHAT V0.2T DOES NOT CLAIM
+-------------------------
+GitHub Actions cannot reasonably download/load the heavyweight local ACE model and run GPU inference during this project build.
+
+CI therefore proves:
+- portable provisioning state logic
+- Windows/MSVC compilation of the real downloader/API/model-init/warmup code path
+- native V0.2T provisioner UI compilation
+- all existing EtherBeat core tests
+
+CI does NOT prove that a specific end-user Windows GPU/driver/network environment can complete the large first-run model download and inference.
+
+The final device acceptance test is now intentionally performed by the V0.2T EXE itself:
+
+  INSTALL / VERIFY -> READY
+
+If it fails, the displayed state/error plus runtime\logs\ace-server.log are the debugging source. Do not treat FAILED as READY and do not continue adding creative engine layers until that machine-specific issue is fixed.
+
+PRESERVED PRODUCER STACK
+------------------------
+V0.2T keeps the existing EtherBeat V0.2 producer architecture intact:
+
+  EtherComposer
+  EtherSearch x4
+  EtherDNA
+  EtherCritic
+  EtherPromote
+  EtherControl
+  EtherVersions
+  EtherCompare
+  EtherTimeline
+  EtherSections
+  EtherArrangement
+  EtherAssemble
+  EtherSeam
+
+The UI anchor remains:
+
+  home | create | library | now playing | song lab | engine
+
+No creative subsystem was removed or redesigned for the provisioner pass.
+
+TEST COVERAGE
+-------------
+V0.2T adds the 14th smoke suite for provisioning-state semantics:
+- missing runtime state
+- runtime-ready state
+- model-missing state
+- model-loading state
+- warmup state
+- READY invariant
+- FAILED/state-name contract
+
+All previous suites remain active:
+- Core
+- EtherSearch
+- AutoPromote
+- EtherControl
+- ACE Control
+- Control UI
+- EtherVersions
+- EtherCompare
+- EtherTimeline
+- EtherSections
+- EtherArrangement
+- EtherAssemble
+- EtherSeam
+- Engine Provisioning
+
+CURRENT PRODUCT RULE
+--------------------
+Until INSTALL / VERIFY reaches READY on the target PC, EtherBeat's creative architecture is considered present but the local generation engine is not accepted as operational.

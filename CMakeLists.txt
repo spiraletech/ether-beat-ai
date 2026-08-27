@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.10
+    VERSION 0.2.11
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -20,6 +20,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherComposer.cpp
     src/core/EtherControl.cpp
     src/core/EtherControlUi.cpp
+    src/core/EtherVersions.cpp
     src/core/EtherDNA.cpp
     src/core/EtherDraft.cpp
     src/core/EtherCritic.cpp
@@ -116,6 +117,10 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_control_ui_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_control_ui_smoke COMMAND etherbeat_control_ui_smoke)
 
+    add_executable(etherbeat_versions_smoke tests/VersionsSmoke.cpp)
+    target_link_libraries(etherbeat_versions_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_versions_smoke COMMAND etherbeat_versions_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
@@ -123,6 +128,7 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_control_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_ace_control_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_control_ui_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_versions_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
@@ -130,5 +136,6 @@ if(BUILD_TESTING)
         target_compile_options(etherbeat_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_ace_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_control_ui_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_versions_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

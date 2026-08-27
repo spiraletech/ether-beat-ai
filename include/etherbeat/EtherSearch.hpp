@@ -22,6 +22,7 @@ using AudioAnalyzer = std::function<AudioAnalysis(const std::filesystem::path&)>
 struct SearchOptions {
     DraftOptions draft{};
     CriticWeights critic{};
+    bool promote_quality{true};
 };
 
 struct SearchCandidateState {
@@ -40,6 +41,18 @@ struct SearchReport {
     DraftBatch draft_batch;
     CriticReport critic_report;
     std::vector<SearchCandidateState> candidates;
+
+    // The Critic-selected draft remains explicit even when a later Quality pass
+    // becomes the final winner exposed to the UI.
+    std::optional<std::size_t> draft_winner_candidate_index;
+    std::filesystem::path draft_winner_audio_path;
+    std::uint64_t draft_winner_seed{0};
+
+    bool quality_promoted{false};
+    std::filesystem::path promotion_manifest_path;
+    double quality_preservation_score{0.0};
+    std::string promotion_error;
+
     std::optional<std::size_t> winner_candidate_index;
     std::filesystem::path winner_audio_path;
     std::uint64_t winner_seed{0};

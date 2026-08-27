@@ -1,4 +1,5 @@
 #include "etherbeat/EtherComposer.hpp"
+#include "etherbeat/EtherCritic.hpp"
 #include "etherbeat/EtherDNA.hpp"
 #include "etherbeat/EtherDraft.hpp"
 #include "etherbeat/GenerationTypes.hpp"
@@ -52,6 +53,36 @@ std::string read_text(const std::filesystem::path& path) {
     return std::string(
         std::istreambuf_iterator<char>{in},
         std::istreambuf_iterator<char>{});
+}
+
+bool save_candidate_dna(
+    const std::filesystem::path& audio,
+    float energy,
+    float low_end_weight,
+    float rhythmic_activity,
+    float brightness,
+    float spectral_center) {
+
+    etherbeat::EtherDNA dna;
+    dna.source_audio = audio;
+    dna.sample_rate = 48000;
+    dna.channels = 2;
+    dna.analyzed_windows = 2048;
+    dna.duration_seconds = 20.0;
+    dna.energy = energy;
+    dna.bass = low_end_weight;
+    dna.mid = 0.45f;
+    dna.treble = brightness;
+    dna.beat_peak = rhythmic_activity;
+    dna.low_end_weight = low_end_weight;
+    dna.brightness = brightness;
+    dna.darkness = 1.0f - brightness;
+    dna.rhythmic_activity = rhythmic_activity;
+    dna.spectral_center = spectral_center;
+    for (std::size_t i = 0; i < dna.spectrum.size(); ++i) {
+        dna.spectrum[i] = 0.1f + static_cast<float>(i) * 0.01f;
+    }
+    return etherbeat::save_ether_dna(dna, etherbeat::ether_dna_sidecar_path(audio));
 }
 
 } // namespace
@@ -165,6 +196,37 @@ int main() {
             draftManifest.find("\"success_count\": 4") == std::string::npos ||
             draftManifest.find("haunted draft batch") == std::string::npos) {
             std::cerr << "EtherDraft manifest is missing batch lineage\n";
+            return 1;
+        }
+
+        // EtherCritic must rank real EtherDNA measurements against Composer intent.
+        // Candidate 2 is deliberately built to match the haunted target closely.
+        if (!save_candidate_dna(batch.candidates[0].artifact.audio_path, 0.90f, 0.10f, 0.90f, 0.90f, 0.80f) ||
+            !save_candidate_dna(batch.candidates[1].artifact.audio_path, 0.55f, 0.40f, 0.60f, 0.50f, 0.55f) ||
+            !save_candidate_dna(batch.candidates[2].artifact.audio_path, 0.38f, 0.52f, 0.48f, 0.30f, 0.81f)) {
+            std::cerr << "Could not stage EtherDNA for critic tests\n";
+            return 1;
+        }
+        // Candidate 3 intentionally has no DNA; Critic must not invent a score.
+
+        etherbeat::EtherCritic critic;
+        const auto criticReport = critic.rank(batch, draftRequest, output);
+        if (!criticReport.has_winner() || !criticReport.winner_candidate_index ||
+            *criticReport.winner_candidate_index != 2u || criticReport.ranked.size() != 4 ||
+            criticReport.ranked.front().candidate_index != 2u ||
+            criticReport.ranked.front().total < 0.99 ||
+            criticReport.ranked.back().candidate_index != 3u ||
+            criticReport.ranked.back().dna_available ||
+            !std::filesystem::exists(criticReport.manifest_path)) {
+            std::cerr << "EtherCritic did not rank measured candidates deterministically\n";
+            return 1;
+        }
+
+        const auto criticManifest = read_text(criticReport.manifest_path);
+        if (criticManifest.find("\"schema\": \"etherbeat.critic.v1\"") == std::string::npos ||
+            criticManifest.find("\"winner_candidate_index\": 2") == std::string::npos ||
+            criticManifest.find("missing EtherDNA sidecar") == std::string::npos) {
+            std::cerr << "EtherCritic manifest is missing explainable ranking lineage\n";
             return 1;
         }
 

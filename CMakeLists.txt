@@ -68,7 +68,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWinAssemble.cpp
+        src/win32/EtherBeatTabbedWinProvisioner.cpp
         src/win32/AudioAnalysisWin.cpp
         src/win32/AudioDecodeWin.cpp
     )

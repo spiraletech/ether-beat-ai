@@ -69,7 +69,7 @@ endif()
 
 if(WIN32 AND ETHERBEAT_BUILD_WIN32)
     add_executable(EtherBeat WIN32
-        src/win32/EtherBeatTabbedWin.cpp
+        src/win32/EtherBeatTabbedWinCompare.cpp
         src/win32/AudioAnalysisWin.cpp
     )
     target_include_directories(EtherBeat PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)

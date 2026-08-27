@@ -1,15 +1,51 @@
 #include "etherbeat/EtherComposer.hpp"
 #include "etherbeat/EtherDNA.hpp"
 #include "etherbeat/GenerationTypes.hpp"
+#include "etherbeat/IModelBackend.hpp"
 #include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/ModelRouter.hpp"
+#include "etherbeat/ProviderTypes.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
+
+namespace {
+
+class RouteBackend final : public etherbeat::IModelBackend {
+public:
+    RouteBackend(std::string name, etherbeat::ProviderCapabilities capabilities)
+        : name_(std::move(name)), capabilities_(capabilities) {}
+
+    [[nodiscard]] std::string_view name() const noexcept override { return name_; }
+    [[nodiscard]] etherbeat::ProviderCapabilities capabilities() const noexcept override { return capabilities_; }
+
+    etherbeat::GenerationArtifact generate(
+        const etherbeat::GenerationRequest&,
+        const std::filesystem::path&) override {
+        throw std::runtime_error("RouteBackend is routing-only");
+    }
+
+private:
+    std::string name_;
+    etherbeat::ProviderCapabilities capabilities_{};
+};
+
+etherbeat::ProviderCapabilities caps(
+    etherbeat::ProviderCapability mode,
+    etherbeat::ProviderCapability role,
+    bool reference = false) {
+
+    auto value = etherbeat::capability(mode) | role;
+    if (reference) value = value | etherbeat::ProviderCapability::ReferenceAudio;
+    return value;
+}
+
+} // namespace
 
 int main() {
     const std::filesystem::path output = "etherbeat-test-output";
@@ -17,6 +53,61 @@ int main() {
     std::filesystem::create_directories(output);
 
     try {
+        // Provider routing must choose by musical job, not provider name.
+        etherbeat::ModelRouter providerRouter;
+        providerRouter.add_provider(std::make_unique<RouteBackend>(
+            "draft-provider",
+            caps(etherbeat::ProviderCapability::TextToInstrumental, etherbeat::ProviderCapability::DraftRole)), 30);
+        providerRouter.add_provider(std::make_unique<RouteBackend>(
+            "quality-provider",
+            caps(etherbeat::ProviderCapability::TextToInstrumental, etherbeat::ProviderCapability::QualityRole)), 20);
+        providerRouter.add_provider(std::make_unique<RouteBackend>(
+            "control-provider",
+            caps(etherbeat::ProviderCapability::Variation, etherbeat::ProviderCapability::ControlRole, true)), 10);
+
+        etherbeat::GenerationRequest routedRequest;
+        routedRequest.prompt = "routing test";
+        routedRequest.duration_seconds = 20.0;
+
+        const auto qualityRoute = providerRouter.route(routedRequest);
+        if (qualityRoute.provider_name != "quality-provider" ||
+            qualityRoute.resolved_intent != etherbeat::RenderIntent::Quality) {
+            std::cerr << "Auto text generation did not route to the Quality provider\n";
+            return 1;
+        }
+
+        routedRequest.render_intent = etherbeat::RenderIntent::Draft;
+        const auto draftRoute = providerRouter.route(routedRequest);
+        if (draftRoute.provider_name != "draft-provider" ||
+            draftRoute.resolved_intent != etherbeat::RenderIntent::Draft) {
+            std::cerr << "Explicit Draft generation did not route to the Draft provider\n";
+            return 1;
+        }
+
+        routedRequest.render_intent = etherbeat::RenderIntent::Auto;
+        routedRequest.mode = etherbeat::GenerationMode::Variation;
+        routedRequest.reference_audio = output / "routing-reference.wav";
+        const auto controlRoute = providerRouter.route(routedRequest);
+        if (controlRoute.provider_name != "control-provider" ||
+            controlRoute.resolved_intent != etherbeat::RenderIntent::Control) {
+            std::cerr << "Variation did not route to a reference-capable Control provider\n";
+            return 1;
+        }
+
+        bool vocalRejected = false;
+        try {
+            routedRequest.mode = etherbeat::GenerationMode::TextToInstrumental;
+            routedRequest.reference_audio.clear();
+            routedRequest.render_intent = etherbeat::RenderIntent::Vocal;
+            static_cast<void>(providerRouter.route(routedRequest));
+        } catch (const std::runtime_error&) {
+            vocalRejected = true;
+        }
+        if (!vocalRejected) {
+            std::cerr << "Unsupported Vocal routing silently fell back to the wrong provider\n";
+            return 1;
+        }
+
         const std::filesystem::path referenceAudio = output / "reference.wav";
 
         etherbeat::AudioAnalysis analysis;
@@ -78,6 +169,12 @@ int main() {
         request.key = "F# minor";
 
         etherbeat::ModelRouter router{std::make_unique<etherbeat::MockWaveBackend>()};
+        const auto route = router.route(request);
+        if (route.provider_name != "mock-wave-48k" || route.resolved_intent != etherbeat::RenderIntent::Quality) {
+            std::cerr << "Single-provider compatibility routing failed\n";
+            return 1;
+        }
+
         const auto artifact = router.generate(request, output);
 
         if (!std::filesystem::exists(artifact.audio_path)) {
@@ -107,8 +204,9 @@ int main() {
 
         if (text.find("etherbeat smoke test") == std::string::npos ||
             text.find("Composition blueprint") == std::string::npos ||
+            text.find("\"render_intent\": \"quality\"") == std::string::npos ||
             text.find("\"seed\": 1444") == std::string::npos) {
-            std::cerr << "Generation metadata is missing Composer lineage\n";
+            std::cerr << "Generation metadata is missing Composer/provider lineage\n";
             return 1;
         }
 

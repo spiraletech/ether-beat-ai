@@ -115,23 +115,23 @@ std::wstring fromUtf8(const std::string& value) {
 }
 
 double parseDouble(HWND control, double fallback, double low, double high) {
-    const std::wstring text = getText(control);
+    const std::wstring textValue = getText(control);
     wchar_t* end = nullptr;
-    const double value = std::wcstod(text.c_str(), &end);
-    if (end == text.c_str() || !std::isfinite(value)) return fallback;
+    const double value = std::wcstod(textValue.c_str(), &end);
+    if (end == textValue.c_str() || !std::isfinite(value)) return fallback;
     return std::clamp(value, low, high);
 }
 
 std::uint64_t parseSeed() {
-    const std::wstring text = getText(g_seed);
-    if (text.empty() || text == L"random" || text == L"RANDOM") return 0;
+    const std::wstring textValue = getText(g_seed);
+    if (textValue.empty() || textValue == L"random" || textValue == L"RANDOM") return 0;
     wchar_t* end = nullptr;
-    const unsigned long long value = std::wcstoull(text.c_str(), &end, 10);
-    return end == text.c_str() ? 0 : static_cast<std::uint64_t>(value);
+    const unsigned long long value = std::wcstoull(textValue.c_str(), &end, 10);
+    return end == textValue.c_str() ? 0 : static_cast<std::uint64_t>(value);
 }
 
-void setStatus(const std::wstring& text) {
-    g_status = text;
+void setStatus(const std::wstring& value) {
+    g_status = value;
     if (g_window) InvalidateRect(g_window, nullptr, FALSE);
 }
 
@@ -157,10 +157,10 @@ Color blue(BYTE alpha = 255) { return Color(alpha, 85, 188, 245); }
 void roundedRect(Graphics& g, const RectF& r, REAL radius, const Color& fill, const Color& stroke, REAL sw = 1.f) {
     GraphicsPath path;
     const REAL d = radius * 2.f;
-    path.AddArc(r.X, r.Y, d, d, 180, 90);
-    path.AddArc(r.GetRight() - d, r.Y, d, d, 270, 90);
-    path.AddArc(r.GetRight() - d, r.GetBottom() - d, d, d, 0, 90);
-    path.AddArc(r.X, r.GetBottom() - d, d, d, 90, 90);
+    path.AddArc(r.X, r.Y, d, d, 180.f, 90.f);
+    path.AddArc(r.GetRight() - d, r.Y, d, d, 270.f, 90.f);
+    path.AddArc(r.GetRight() - d, r.GetBottom() - d, d, d, 0.f, 90.f);
+    path.AddArc(r.X, r.GetBottom() - d, d, d, 90.f, 90.f);
     path.CloseFigure();
     SolidBrush brush(fill);
     g.FillPath(&brush, &path);
@@ -432,8 +432,8 @@ void openLastOutput() {
 void generate(HWND owner, bool mutationPass) {
     if (g_generating) return;
     try {
-        const std::string prompt = toUtf8(getText(g_prompt));
-        if (prompt.empty()) {
+        const std::string promptValue = toUtf8(getText(g_prompt));
+        if (promptValue.empty()) {
             MessageBoxW(owner, L"Give the workshop a sound description first.", L"ETHERBEAT", MB_OK | MB_ICONINFORMATION);
             return;
         }
@@ -441,7 +441,7 @@ void generate(HWND owner, bool mutationPass) {
         g_generating = true;
         setStatus(L"MOCK MODEL // writing a valid 48 kHz prototype artifact...");
         etherbeat::GenerationRequest request;
-        request.prompt = prompt;
+        request.prompt = promptValue;
         request.mode = mutationPass ? etherbeat::GenerationMode::Variation : g_mode;
         request.duration_seconds = parseDouble(g_duration, 20.0, 1.0, 600.0);
         request.bpm = parseDouble(g_bpm, 68.0, 0.0, 300.0);
@@ -517,8 +517,11 @@ void drawButton(Graphics& g, DRAWITEMSTRUCT* item) {
             pressed ? Color(255, 202, 37, 132) : Color(255, 229, 45, 158));
         GraphicsPath path;
         const REAL d = 38.f;
-        path.AddArc(0, 0, d, d, 180, 90); path.AddArc(w - d, 0, d, d, 270, 90);
-        path.AddArc(w - d, h - d, d, d, 0, 90); path.AddArc(0, h - d, d, d, 90, 90); path.CloseFigure();
+        path.AddArc(0.f, 0.f, d, d, 180.f, 90.f);
+        path.AddArc(w - d, 0.f, d, d, 270.f, 90.f);
+        path.AddArc(w - d, h - d, d, d, 0.f, 90.f);
+        path.AddArc(0.f, h - d, d, d, 90.f, 90.f);
+        path.CloseFigure();
         g.FillPath(&gradient, &path);
         text(g, g_generating ? L"GENERATING..." : L"GENERATE", r, 14.f, Color(255, 255, 250, 253), FontStyleBold,
              StringAlignmentCenter, StringAlignmentCenter);

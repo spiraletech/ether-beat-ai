@@ -1,5 +1,7 @@
 #pragma once
 
+#include "etherbeat/ProviderTypes.hpp"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -16,6 +18,7 @@ enum class GenerationMode {
 struct GenerationRequest {
     std::string prompt;
     GenerationMode mode{GenerationMode::TextToInstrumental};
+    RenderIntent render_intent{RenderIntent::Auto};
     std::uint64_t seed{0};
     double duration_seconds{10.0};
     double bpm{0.0};

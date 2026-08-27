@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
 project(EtherBeat
-    VERSION 0.2.3
+    VERSION 0.2.4
     DESCRIPTION "ETHERBEAT private Windows-native generative music workstation"
     LANGUAGES CXX
 )
@@ -19,6 +19,7 @@ add_library(etherbeat_core STATIC
     src/core/ModelRouter.cpp
     src/core/EtherComposer.cpp
     src/core/EtherDNA.cpp
+    src/core/EtherDraft.cpp
     src/backends/MockWaveBackend.cpp
 )
 

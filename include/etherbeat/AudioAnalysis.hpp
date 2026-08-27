@@ -21,6 +21,11 @@ struct AudioAnalysis {
     float beat_peak{0.0f};
 
     std::array<float, 32> spectrum{};
+
+    // Normalized left-to-right time-domain energy summary used by the
+    // producer timeline. It is derived during the same decode/FFT pass.
+    std::array<float, 128> timeline_envelope{};
+
     std::string error;
 };
 

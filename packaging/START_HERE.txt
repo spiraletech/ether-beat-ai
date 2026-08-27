@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2J
+ETHERBEAT // ALIEN WORKSHOP V0.2K
 
 UI ANCHOR
 ---------
@@ -6,31 +6,91 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-The V0.2 UI remains the product chassis. V0.2J activates the first real producer-control provider underneath it without redesigning the shell.
+V0.2K does not redesign the shell. It turns NOW PLAYING into a producer workspace by exposing the live source-audio control capabilities added in V0.2J.
 
-NEW IN V0.2J // LIVE ACE CONTROL PROVIDER
------------------------------------------
-EtherControl is no longer architecture-only.
-The managed local ACE-Step 1.5 provider now advertises the control jobs it can actually execute and translates EtherBeat control requests into ACE's current source-audio task API.
+NEW IN V0.2K // ETHERCONTROL UI V0.1
+------------------------------------
+NOW PLAYING now uses a split workspace:
 
-LIVE TASK MAPPING
+  left  = EtherPlay-derived frequency analyzer
+  right = ETHERCONTROL // LIVE
+
+The Control card exposes:
+- producer instruction
+- reference strength (0..1)
+- repaint start time
+- repaint end time
+- VARIATION
+- REPLACE SECTION
+
+The currently loaded Now Playing track is automatically used as the source audio.
+
+LIVE USER FLOW
+--------------
+VARIATION:
+  current track
+      -> producer instruction
+      -> reference strength
+      -> EtherControl typed request
+      -> ModelRouter Control role
+      -> managed ACE-Step cover task
+      -> new WAV version
+      -> native audio analysis
+      -> NOW PLAYING
+
+REPLACE SECTION:
+  current track
+      -> producer instruction
+      -> validated start/end window
+      -> reference strength
+      -> EtherControl typed request
+      -> ModelRouter Temporal Control
+      -> managed ACE-Step repaint task
+      -> new WAV version
+      -> native audio analysis
+      -> NOW PLAYING
+
+ORIGINAL PRESERVATION
+---------------------
+Control operations never overwrite the loaded source file.
+New control renders are written under:
+
+  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\<source-stem>\
+
+The Library scan is recursive in V0.2K, so generated control versions remain loadable from the existing Library screen.
+
+TYPED UI BOUNDARY
 -----------------
-EtherBeat mode            ACE provider task
-------------------------- -----------------
+A portable ControlUiRequestFactory now converts GUI state into GenerationRequest objects.
+The Win32 shell does not hand-build ACE JSON.
+
+The factory validates:
+- source track exists logically
+- producer instruction is present
+- reference strength is 0..1
+- Replace Section end is later than start
+- repaint window stays inside the measured source duration
+
+Reference strength also derives a conservative mutation amount for the provider-neutral request.
+
+STATE CLEANUP
+-------------
+NOW PLAYING analysis and SONG LAB reference analysis are now separate state objects.
+Analyzing a Song Lab reference no longer overwrites the spectrum/duration state used by Now Playing controls.
+
+LIVE PROVIDER MAPPING
+---------------------
+EtherBeat mode            ACE task
+------------------------- ---------
 TextToInstrumental        text2music
 Variation                 cover
 Audio-to-Audio            cover
 Replace Section           repaint
 Extend                    BLOCKED
 
-Variation / Audio-to-Audio send source audio plus EtherBeat reference strength as ACE audio_cover_strength.
-Replace Section sends source audio plus the validated repainting_start / repainting_end temporal window.
-
-The output lineage records the provider task, EtherBeat mode, render intent, seed, reference strength and edit-window values.
-
 STRICT CAPABILITY TRUTH
 -----------------------
-The managed ACE provider now advertises:
+ACE currently supports through EtherBeat:
 - TextToInstrumental
 - Variation
 - AudioToAudio
@@ -42,89 +102,67 @@ The managed ACE provider now advertises:
 - LocalRuntime
 - TemporalControl
 
-It deliberately does NOT advertise:
+ACE still does NOT claim:
 - Extend
 - ComponentLocks
-- DrumConditioning
-- MelodyConditioning
-- HarmonyConditioning
+- isolated DrumConditioning
+- isolated MelodyConditioning
+- symbolic HarmonyConditioning
 
-EtherBeat therefore refuses unsupported precision requests rather than silently dropping musical constraints.
-
-ACE CONTROL CODEC
------------------
-A portable AceStepRequestCodec now owns provider translation.
-This keeps provider-specific JSON outside EtherControl and ModelRouter.
-
-The codec validates:
-- source audio exists logically for source-conditioned jobs
-- repaint windows have valid start/end ordering
-- unsupported component locks are rejected
-- unsupported isolated drum/melody references are rejected
-- unsupported symbolic chord conditioning is rejected
-- Extend remains rejected until continuation semantics are separately validated
-
-This means future providers can implement the same EtherControl contract without copying ACE-specific fields into EtherBeat core.
+Unsupported controls remain blocked instead of silently discarded.
 
 CURRENT CREATE PIPELINE
 -----------------------
-Normal CREATE remains unchanged:
+CREATE remains:
 
-  EtherBeat UI
-      -> EtherComposer
+  EtherComposer
       -> EtherSearch x4
-          -> EtherDraft
-          -> native audio analysis
-          -> EtherDNA
-          -> EtherCritic
-          -> draft winner
-          -> EtherPromote
-          -> Quality provider
-          -> final analysis / EtherDNA
+      -> EtherDraft
+      -> native analysis / EtherDNA
+      -> EtherCritic
+      -> EtherPromote
+      -> Quality render
       -> NOW PLAYING
 
-The live Control provider is now available to ModelRouter for source-audio producer jobs. Detailed Variation / Replace Section controls are not exposed as fake buttons in the V0.2J UI yet; the next UI phase can surface only the capabilities the active provider actually supports.
+V0.2K adds the next producer loop after generation:
 
-TESTED LIVE-CONTROL CONTRACT
-----------------------------
-A dedicated ACE control smoke test verifies without downloading model weights:
-- provider capability advertisement is truthful
-- TextToInstrumental maps to text2music
-- Variation maps to cover
-- Audio-to-Audio maps to cover
-- cover includes source audio, instruction and reference strength
-- Replace Section maps to repaint
-- repaint includes source audio and exact start/end window
-- Extend remains rejected
-- component locks remain rejected by ACE
-- symbolic chord conditioning remains rejected by ACE
-- existing Core/Search/AutoPromote/Control suites continue to pass
-- Windows/MSVC and Ubuntu/GCC compile and execute the same request-codec assertions
+  NOW PLAYING
+      -> Variation / Replace Section
+      -> new local version
+      -> NOW PLAYING
 
-CI validates the native backend, provider routing, and exact request translation. It does not perform heavyweight model inference on GitHub runners because the managed ACE model/runtime weights are not installed there.
+TEST COVERAGE
+-------------
+CI verifies:
+- all existing Core/Search/AutoPromote/Control/ACE-Control smoke tests
+- new Control UI request-factory smoke test
+- Variation UI mapping
+- Replace Section UI mapping
+- mutation/reference-strength mapping
+- invalid repaint-window rejection
+- out-of-track repaint rejection
+- Ubuntu/GCC build
+- Windows/MSVC native ETHERBEAT.exe build
 
-MODEL / LICENSE NOTE
---------------------
-JASCO-style control was studied as a possible specialized provider, but EtherBeat does not bundle JASCO model weights in this build. The current live control implementation reuses the managed ACE-Step foundation already inside EtherBeat.
+CI does NOT run heavyweight ACE model inference because the local model/runtime weights are not installed on GitHub runners. The provider API mapping and native integration compile/test there; actual model inference happens on the local EtherBeat machine.
 
 LOCAL DATA
 ----------
 Runtime:
   %LOCALAPPDATA%\EtherTech\EtherBeat\runtime
 
-Generated library / search lineage:
+Library:
   %LOCALAPPDATA%\EtherTech\EtherBeat\library
 
-Quality promotion renders:
-  %LOCALAPPDATA%\EtherTech\EtherBeat\library\promoted\<search-id>\
+Control versions:
+  %LOCALAPPDATA%\EtherTech\EtherBeat\library\control\<source-stem>\
 
 CURRENT LIMITS
 --------------
-- V0.2J does not yet expose Variation / Replace Section controls in the graphical UI.
-- Extend is intentionally blocked until continuation behavior is validated.
-- ACE does not advertise true component-lock, isolated drum/melody, or symbolic chord conditioning through this adapter.
+- Extend remains intentionally blocked until continuation behavior is separately validated.
+- ACE does not claim true component locks or isolated drum/melody/chord conditioning through this adapter.
 - SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
-- EtherCritic remains DSP-derived; learned semantic/taste heads are later.
-- Pleiadian/user taste weighting is not trained yet.
+- EtherCritic is still DSP-derived; learned semantic/taste heads come later.
+- Pleiadian taste adaptation is not trained yet.
 - Dedicated Vocal provider is not wired yet.
-- No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.
+- No private corpus, vocals, LoRAs, checkpoints or training data ship in this public package.

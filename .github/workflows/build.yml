@@ -32,25 +32,14 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force package | Out-Null
           Copy-Item build/Release/ETHERBEAT.exe package/ETHERBEAT.exe
-          @"
-          ETHERBEAT // ALIEN WORKSHOP V0.1A
-
-          TEST THIS FIRST:
-          1. Run ETHERBEAT.exe.
-          2. Click REFERENCE.
-          3. Choose a WAV or MP3.
-          4. EtherBeat decodes it with Windows Media Foundation and runs the native 1024-point FFT analyzer.
-          5. The right panel displays the real 32-band spectrum plus bass, mid, air, and beat metrics.
-
-          GENERATE / MUTATE currently use the explicit mock-wave backend and create valid 48 kHz stereo WAV artifacts. They do NOT yet claim to be the final generative AI model.
-
-          Private corpus, model weights, vocals, LoRAs, and training data are intentionally not shipped in this public test package.
-          "@ | Set-Content -Encoding UTF8 package/START_HERE.txt
+          Copy-Item packaging/START_HERE.txt package/START_HERE.txt
+          Copy-Item packaging/SETUP_ACE_STEP.bat package/SETUP_ACE_STEP.bat
+          Copy-Item packaging/START_ACE_STEP.bat package/START_ACE_STEP.bat
 
       - name: Upload Windows test ZIP
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: ETHERBEAT-Windows-x64-V0.1A
+          name: ETHERBEAT-Windows-x64-V0.1B
           path: package/
           if-no-files-found: error

@@ -12,12 +12,14 @@
 #include <complex>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace etherbeat {
 namespace {
 
 constexpr std::size_t kFFTSize = 1024;
 constexpr std::size_t kSpectrumBands = 32;
+constexpr std::size_t kTimelineBins = 128;
 constexpr std::uint64_t kMaxWindows = 30000;
 constexpr float kPi = 3.14159265358979323846f;
 
@@ -121,6 +123,35 @@ WindowFeatures analyze_window(const std::array<float, kFFTSize>& samples, std::u
     return result;
 }
 
+void build_timeline_envelope(
+    const std::vector<float>& windowEnergies,
+    std::array<float, kTimelineBins>& envelope) {
+
+    envelope.fill(0.0f);
+    if (windowEnergies.empty()) return;
+
+    float peak = std::numeric_limits<float>::epsilon();
+    for (float value : windowEnergies) peak = std::max(peak, value);
+
+    for (std::size_t bin = 0; bin < kTimelineBins; ++bin) {
+        const std::size_t begin = (bin * windowEnergies.size()) / kTimelineBins;
+        const std::size_t end = std::max(
+            begin + 1,
+            ((bin + 1) * windowEnergies.size()) / kTimelineBins);
+
+        double sum = 0.0;
+        float localPeak = 0.0f;
+        for (std::size_t i = begin; i < std::min(end, windowEnergies.size()); ++i) {
+            sum += windowEnergies[i];
+            localPeak = std::max(localPeak, windowEnergies[i]);
+        }
+        const std::size_t count = std::max<std::size_t>(1, std::min(end, windowEnergies.size()) - begin);
+        const float average = static_cast<float>(sum / static_cast<double>(count));
+        const float shaped = average * 0.68f + localPeak * 0.32f;
+        envelope[bin] = std::clamp(std::sqrt(shaped / peak), 0.0f, 1.0f);
+    }
+}
+
 } // namespace
 
 AudioAnalysis analyze_audio_file(const std::filesystem::path& path) {
@@ -188,6 +219,8 @@ AudioAnalysis analyze_audio_file(const std::filesystem::path& path) {
     std::size_t fill = 0;
     std::uint64_t pcmFrames = 0;
     std::uint64_t windows = 0;
+    std::vector<float> windowEnergies;
+    windowEnergies.reserve(4096);
 
     double energySum = 0.0;
     double bassSum = 0.0;
@@ -252,6 +285,7 @@ AudioAnalysis analyze_audio_file(const std::filesystem::path& path) {
                             maxBass = std::max(maxBass, features.bass);
                             maxMid = std::max(maxMid, features.mid);
                             maxTreble = std::max(maxTreble, features.treble);
+                            windowEnergies.push_back(features.energy);
 
                             for (std::size_t i = 0; i < kSpectrumBands; ++i) {
                                 spectrumSum[i] += features.spectrum[i];
@@ -303,6 +337,8 @@ AudioAnalysis analyze_audio_file(const std::filesystem::path& path) {
         result.spectrum[i] = std::clamp(
             static_cast<float>(std::sqrt(average / maxSpectrum)), 0.0f, 1.0f);
     }
+
+    build_timeline_envelope(windowEnergies, result.timeline_envelope);
 
     result.analyzed_windows = windows;
     result.duration_seconds = static_cast<double>(pcmFrames) / static_cast<double>(sampleRate);

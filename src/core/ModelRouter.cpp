@@ -2,10 +2,13 @@
 #include "etherbeat/MockWaveBackend.hpp"
 #include "etherbeat/EtherComposer.hpp"
 #include "etherbeat/EtherControl.hpp"
+#include "etherbeat/EtherVersions.hpp"
 #ifdef _WIN32
 #include "etherbeat/ManagedAceStepBackend.hpp"
 #endif
 
+#include <algorithm>
+#include <cctype>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -87,6 +90,44 @@ bool provider_supports_control_details(
     if (needs_temporal_control(request) &&
         !has_capability(caps, ProviderCapability::TemporalControl)) return false;
     return true;
+}
+
+std::filesystem::path version_library_root(const std::filesystem::path& output_directory) {
+    auto cursor = output_directory.lexically_normal();
+    for (;;) {
+        auto name = cursor.filename().string();
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (name == "library") return cursor;
+        const auto parent = cursor.parent_path();
+        if (parent.empty() || parent == cursor) break;
+        cursor = parent;
+    }
+    return output_directory;
+}
+
+void persist_control_lineage(
+    const GenerationRequest& request,
+    const GenerationArtifact& artifact,
+    const std::filesystem::path& output_directory) {
+
+    if (!is_control_mode(request.mode) || request.reference_audio.empty() || artifact.audio_path.empty()) {
+        return;
+    }
+
+    // Audio generation already succeeded. A metadata I/O failure must never destroy
+    // a usable render, so lineage persistence is best-effort at this boundary.
+    try {
+        EtherVersions versions(version_library_root(output_directory));
+        versions.register_child(
+            request.reference_audio,
+            artifact.audio_path,
+            mode_name(request.mode),
+            request.prompt);
+    } catch (...) {
+        // The audio artifact remains authoritative; a later library repair pass can
+        // reconstruct or re-register lineage from generation metadata.
+    }
 }
 
 } // namespace
@@ -210,7 +251,9 @@ GenerationArtifact ModelRouter::generate(
     GenerationRequest compiled = composer.compile(normalized, plan);
     compiled.render_intent = resolved;
 
-    return slot.backend->generate(compiled, output_directory);
+    auto artifact = slot.backend->generate(compiled, output_directory);
+    persist_control_lineage(normalized, artifact, output_directory);
+    return artifact;
 }
 
 std::unique_ptr<IModelBackend> make_default_backend() {

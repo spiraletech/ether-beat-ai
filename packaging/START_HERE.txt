@@ -1,4 +1,4 @@
-ETHERBEAT // ALIEN WORKSHOP V0.2H
+ETHERBEAT // ALIEN WORKSHOP V0.2I
 
 UI ANCHOR
 ---------
@@ -6,151 +6,130 @@ EtherBeat keeps the EtherPlay-derived navigation spine intact:
 
   home | create | library | now playing | song lab | engine
 
-NEW IN V0.2H // ETHERPROMOTE V0.1
+The V0.2 UI remains the product chassis. V0.2I expands the engine contract underneath it; it does not add fake controls for providers that cannot execute them.
+
+NEW IN V0.2I // ETHERCONTROL V0.1
 --------------------------------
-EtherSearch no longer stops at the Critic-selected draft.
+EtherBeat now has a provider-agnostic precision editing contract for producer-style generation jobs.
 
-The default CREATE pipeline is now:
+Supported control modes in the core contract:
+- Variation
+- Extend
+- Audio-to-Audio
+- Replace Section
 
-  source prompt
-      -> EtherComposer
-      -> EtherDraft x4
-      -> Provider Router / Draft role
-      -> four local candidate audio files
-      -> native EtherPlay-derived FFT analysis
-      -> EtherDNA sidecars
-      -> EtherCritic ranking
-      -> Critic-selected draft winner
-      -> EtherPromote
-      -> Provider Router / Quality role
-      -> final Quality render
-      -> final audio analysis + EtherDNA
-      -> NOW PLAYING
-
-The original winning draft and all alternates remain preserved. The Quality render is written into a separate promoted/<search-id>/ directory so identical seed naming cannot overwrite the draft that earned promotion.
-
-ETHERPROMOTE CONTRACT
----------------------
-V0.1 promotes only a measured Search winner.
-
-Requirements:
-- EtherSearch must have a Critic winner
-- the winning draft must have a persisted EtherDNA sidecar
-- a provider must advertise the Quality role
-- the final Quality render must be analyzable
-- final EtherDNA must persist successfully
-
-If the winning draft has no DNA, EtherPromote refuses to invent a preservation target.
-
-CURRENT ACE LIMIT
------------------
-The current ACE-Step provider advertises TextToInstrumental + Draft + Quality, but not reference-audio conditioning.
-
-Therefore V0.1 Quality promotion does NOT pretend to preserve the draft waveform directly.
-Instead it locks:
-- Critic-selected candidate lineage
-- winning seed
-- original Composer intent
-- measured winning EtherDNA target
-
-The measured DNA summary is injected into the Quality request with explicit preservation instructions.
-A future Control/reference-capable provider can upgrade this same contract to direct audio-conditioned promotion without replacing the EtherBeat UI or Search architecture.
-
-DNA PRESERVATION CHECK
-----------------------
-The Quality render is analyzed again after generation.
-EtherPromote compares source-winner DNA against final-render DNA across:
-- energy
-- low-end weight
-- rhythmic activity
-- brightness
-- spectral center
-
-The resulting 0..1 preservation score is stored in the promotion manifest.
-This gives EtherBeat a measurable way to detect when a supposed fidelity upgrade drifted away from the musical identity that actually won the search.
-
-PROMOTION MANIFEST
-------------------
-Each promotion writes:
-
-  <search-id>-quality.etherpromote.json
-
-It records:
-- schema etherbeat.promote.v1
-- source candidate index / seed / audio path
-- source DNA availability
-- Quality provider lineage
-- Quality generation state
-- Quality analysis state
-- Quality DNA persistence
-- final Quality audio / metadata paths
-- DNA preservation score
-- explicit error state
-
-ETHERSEARCH V0.1 + PROMOTION
-----------------------------
-EtherSearch now preserves two winner concepts:
-
-  draft_winner_*
-      = the candidate EtherCritic actually selected
-
-  winner_*
-      = the final artifact exposed to the UI
-
-With default settings, winner_* becomes the promoted Quality render when EtherPromote succeeds.
-If Quality promotion fails, the measured draft winner remains available and all promotion diagnostics persist instead of deleting the successful Search result.
-
-The search manifest now also links:
-- draft winner candidate / seed / path
-- quality_promoted state
-- promotion manifest path
-- Quality DNA preservation score
-- promotion error
-- final winner path / seed
-
-ENGINE STACK
+CONTROL DATA
 ------------
-  ETHERBEAT UI
-      -> EtherComposer V0.1
-      -> EtherSearch V0.1
-          -> EtherDraft V0.1
-              -> Draft provider
-              -> candidate A / B / C / D
-          -> native audio analyzer
-          -> EtherDNA V0.1
-          -> EtherCritic V0.1
+GenerationRequest can now carry explicit control semantics instead of hiding producer intent inside prompt prose:
+
+- reference audio
+- mutation amount
+- reference strength
+- temporal edit start/end window
+- component lock mask
+- optional drum conditioning reference
+- optional melody conditioning reference
+- optional chord progression
+
+Lockable musical components:
+- drums
+- bass
+- melody
+- harmony
+- texture
+- arrangement
+
+ETHERCONTROL COMPILER
+---------------------
+EtherControl validates and normalizes control jobs before a renderer sees them.
+
+Rules include:
+- control jobs require reference audio
+- mutation amount must be 0..1
+- reference strength must be 0..1
+- temporal windows require both start and end
+- end must be later than start
+- Replace Section always requires an explicit temporal window
+- render intent is normalized to Control
+
+The compiler emits an idempotent control blueprint containing mode, reference strength, mutation amount, locked components, temporal boundaries and optional drum/melody/harmony conditioning.
+
+Locked components are compiled as preservation constraints, not casual style suggestions.
+
+CAPABILITY-GATED ROUTING
+------------------------
+Provider Router now understands additional precision capabilities:
+
+- ReplaceSection
+- DrumConditioning
+- MelodyConditioning
+- HarmonyConditioning
+- ComponentLocks
+- TemporalControl
+
+A provider must advertise every capability required by the job.
+EtherBeat will not silently discard locks, edit windows, chord conditioning or reference controls just to make a request run.
+
+Example:
+
+  basic variation
+      -> basic Control provider can qualify
+
+  replace 8-16 seconds
+  + lock drums/bass/melody/harmony/arrangement
+  + drum reference
+  + melody reference
+  + chord progression
+      -> only a precision Control provider advertising ALL requested features qualifies
+
+If no provider qualifies, routing fails explicitly with a human-readable capability error.
+
+CURRENT LIVE PROVIDER BOUNDARY
+------------------------------
+The current managed ACE-Step provider still advertises:
+
+  TextToInstrumental + Draft + Quality
+
+It does NOT currently advertise EtherBeat Control + ReferenceAudio precision capabilities.
+
+Therefore V0.2I deliberately does not expose a fake Replace Section / lock-components UI button yet.
+The Control engine contract is ready for a JASCO-style provider, another capable open model, or a future native Ether renderer without changing the existing EtherBeat UI architecture.
+
+CURRENT CREATE PIPELINE
+-----------------------
+Normal CREATE remains fully operational:
+
+  EtherBeat UI
+      -> EtherComposer
+      -> EtherSearch x4
+          -> EtherDraft
+          -> native audio analysis
+          -> EtherDNA
+          -> EtherCritic
           -> draft winner
-          -> EtherPromote V0.1
-              -> Quality provider
-              -> final render
-              -> final EtherDNA
-              -> preservation score
+          -> EtherPromote
+          -> Quality provider
+          -> final analysis / EtherDNA
       -> NOW PLAYING
 
-TESTED CONTRACT
----------------
-Portable tests now verify both explicit and default promotion paths.
+EtherControl is the parallel producer-editing path that future capable providers will activate.
 
-Tests prove:
-- four candidates are generated and analyzed
-- Critic selects the intended candidate
-- winner seed is preserved into the Quality request
-- Quality request carries render_intent = quality
-- winning DNA measurements are injected into the Quality prompt
-- promoted audio is physically separate from its draft source
-- final audio receives fresh EtherDNA
-- promotion manifest persists
-- DNA preservation score remains high for a controlled matching render
-- EtherSearch's default call path automatically performs the Quality pass
-- Windows/MSVC and Ubuntu/GCC execute the same promotion assertions
+TESTED ETHERCONTROL CONTRACT
+----------------------------
+The dedicated precision-control smoke test verifies:
 
-LIVE CREATE FLOW
-----------------
-The existing V0.2 EtherBeat CREATE UI remains the visual anchor.
-Its current SEARCH x4 call uses EtherSearch defaults, so Quality promotion is now automatically enabled underneath the existing screen.
-
-NOW PLAYING receives the final promoted Quality render when promotion succeeds.
-All Draft candidates and their DNA/manifests remain under the local library lineage.
+- Replace Section compiles a structured Control request
+- five simultaneous component locks survive compilation
+- temporal window survives compilation
+- reference/mutation strengths survive compilation
+- chord progression survives compilation
+- control blueprint is idempotent and is not duplicated
+- precision request routes only to a fully capable provider
+- basic variation can still use a simpler Control provider
+- a weak provider cannot silently strip requested locks
+- invalid edit windows are rejected
+- existing Core/Search/AutoPromote suites continue to pass
+- Windows/MSVC and Ubuntu/GCC pass the same contract
 
 LOCAL DATA
 ----------
@@ -165,10 +144,10 @@ Quality promotion renders:
 
 CURRENT LIMITS
 --------------
-- ACE-Step is still both the live Draft and Quality provider, so V0.2H uses the same foundation renderer for both roles.
-- SEARCH x4 is sequential until provider-native batching / a dedicated fast Draft engine is wired.
-- ACE does not yet advertise direct reference-audio conditioning in EtherBeat; true waveform-locked promotion awaits a Control-capable provider.
-- EtherCritic remains DSP-derived; learned CLAP/MERT-style semantic heads are later.
+- No live precision Control provider is registered yet.
+- ACE-Step remains the current Draft + Quality renderer.
+- SEARCH x4 is sequential until provider-native batching or a dedicated fast Draft engine is wired.
+- EtherCritic remains DSP-derived; learned semantic/taste heads are later.
 - Pleiadian/user taste weighting is not trained yet.
 - Dedicated Vocal provider is not wired yet.
 - No private corpus, vocals, LoRAs, checkpoints or training data ship in this public test package.

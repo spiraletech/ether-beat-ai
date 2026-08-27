@@ -13,18 +13,13 @@ namespace etherbeat {
 namespace {
 
 void write_u16_le(std::ofstream& out, std::uint16_t value) {
-    const char b[2]{
-        static_cast<char>(value & 0xffu),
-        static_cast<char>((value >> 8u) & 0xffu)};
+    const char b[2]{static_cast<char>(value & 0xffu), static_cast<char>((value >> 8u) & 0xffu)};
     out.write(b, 2);
 }
 
 void write_u32_le(std::ofstream& out, std::uint32_t value) {
-    const char b[4]{
-        static_cast<char>(value & 0xffu),
-        static_cast<char>((value >> 8u) & 0xffu),
-        static_cast<char>((value >> 16u) & 0xffu),
-        static_cast<char>((value >> 24u) & 0xffu)};
+    const char b[4]{static_cast<char>(value & 0xffu), static_cast<char>((value >> 8u) & 0xffu),
+                    static_cast<char>((value >> 16u) & 0xffu), static_cast<char>((value >> 24u) & 0xffu)};
     out.write(b, 4);
 }
 
@@ -45,71 +40,107 @@ std::string escape_json(const std::string& value) {
 
 PcmAudio slice_audio(const PcmAudio& source, double start_seconds, double end_seconds) {
     if (!source.valid()) throw std::runtime_error("EtherAssemble source PCM is invalid");
-    if (!std::isfinite(start_seconds) || !std::isfinite(end_seconds) ||
-        start_seconds < 0.0 || end_seconds <= start_seconds) {
+    if (!std::isfinite(start_seconds) || !std::isfinite(end_seconds) || start_seconds < 0.0 || end_seconds <= start_seconds) {
         throw std::runtime_error("EtherAssemble received invalid source section timing");
     }
+    const auto frames = source.frame_count();
+    const auto first_frame = std::min<std::size_t>(frames, static_cast<std::size_t>(std::llround(start_seconds * source.sample_rate)));
+    const auto last_frame = std::min<std::size_t>(frames, static_cast<std::size_t>(std::llround(end_seconds * source.sample_rate)));
+    if (last_frame <= first_frame) throw std::runtime_error("EtherAssemble section falls outside decoded source audio");
 
-    const auto frame_count = source.frame_count();
-    const auto start_frame = std::min<std::size_t>(
-        frame_count,
-        static_cast<std::size_t>(std::llround(start_seconds * source.sample_rate)));
-    const auto end_frame = std::min<std::size_t>(
-        frame_count,
-        static_cast<std::size_t>(std::llround(end_seconds * source.sample_rate)));
-    if (end_frame <= start_frame) throw std::runtime_error("EtherAssemble section falls outside decoded source audio");
-
-    const std::size_t first = start_frame * source.channels;
-    const std::size_t last = end_frame * source.channels;
     PcmAudio result;
     result.sample_rate = source.sample_rate;
     result.channels = source.channels;
+    const std::size_t first = first_frame * source.channels;
+    const std::size_t last = last_frame * source.channels;
     result.samples.assign(source.samples.begin() + static_cast<std::ptrdiff_t>(first),
                           source.samples.begin() + static_cast<std::ptrdiff_t>(last));
     return result;
 }
 
 double expected_placeholder_duration(const ArrangementPlan& plan, const ArrangementSlot& target) {
-    double same_kind_sum = 0.0;
-    std::size_t same_kind_count = 0;
-    double all_sum = 0.0;
-    std::size_t all_count = 0;
+    double same_sum = 0.0, all_sum = 0.0;
+    std::size_t same_count = 0, all_count = 0;
     for (const auto& slot : plan.slots) {
         if (!slot.has_source_audio()) continue;
-        const double duration = slot.source_end_seconds - slot.source_start_seconds;
-        if (!(duration > 0.0)) continue;
-        all_sum += duration;
-        ++all_count;
-        if (slot.kind == target.kind) {
-            same_kind_sum += duration;
-            ++same_kind_count;
-        }
+        const double d = slot.source_end_seconds - slot.source_start_seconds;
+        if (!(d > 0.0)) continue;
+        all_sum += d; ++all_count;
+        if (slot.kind == target.kind) { same_sum += d; ++same_count; }
     }
-    if (same_kind_count > 0) return same_kind_sum / static_cast<double>(same_kind_count);
-    if (all_count > 0) return all_sum / static_cast<double>(all_count);
+    if (same_count) return same_sum / static_cast<double>(same_count);
+    if (all_count) return all_sum / static_cast<double>(all_count);
     return 8.0;
 }
 
-void validate_format(const PcmAudio& audio, std::uint32_t sample_rate, std::uint16_t channels) {
-    if (!audio.valid()) throw std::runtime_error("EtherAssemble resolver returned invalid PCM audio");
-    if (audio.sample_rate != sample_rate || audio.channels != channels) {
-        throw std::runtime_error("EtherAssemble V0.1 requires matching sample rate/channel layout for every slot");
+PcmAudio convert_channels(const PcmAudio& source, std::uint16_t target_channels) {
+    if (!source.valid() || target_channels == 0) throw std::runtime_error("EtherAssemble channel conversion input is invalid");
+    if (source.channels == target_channels) return source;
+
+    PcmAudio result;
+    result.sample_rate = source.sample_rate;
+    result.channels = target_channels;
+    result.samples.resize(source.frame_count() * target_channels);
+
+    for (std::size_t frame = 0; frame < source.frame_count(); ++frame) {
+        const std::size_t src = frame * source.channels;
+        const std::size_t dst = frame * target_channels;
+        float average = 0.0f;
+        for (std::size_t ch = 0; ch < source.channels; ++ch) average += source.samples[src + ch];
+        average /= static_cast<float>(source.channels);
+
+        if (target_channels == 1) {
+            result.samples[dst] = average;
+        } else if (source.channels == 1) {
+            for (std::size_t ch = 0; ch < target_channels; ++ch) result.samples[dst + ch] = source.samples[src];
+        } else {
+            for (std::size_t ch = 0; ch < target_channels; ++ch) {
+                result.samples[dst + ch] = ch < source.channels ? source.samples[src + ch] : average;
+            }
+        }
     }
+    return result;
 }
 
-void append_with_crossfade(
-    std::vector<float>& output,
-    const PcmAudio& segment,
-    double requested_crossfade_seconds,
-    AssembleSlotResult& slot_result) {
+PcmAudio convert_sample_rate(const PcmAudio& source, std::uint32_t target_rate) {
+    if (!source.valid() || target_rate == 0) throw std::runtime_error("EtherAssemble sample-rate conversion input is invalid");
+    if (source.sample_rate == target_rate) return source;
 
+    const double ratio = static_cast<double>(target_rate) / static_cast<double>(source.sample_rate);
+    const std::size_t target_frames = std::max<std::size_t>(1, static_cast<std::size_t>(std::llround(source.frame_count() * ratio)));
+    PcmAudio result;
+    result.sample_rate = target_rate;
+    result.channels = source.channels;
+    result.samples.resize(target_frames * result.channels);
+
+    for (std::size_t frame = 0; frame < target_frames; ++frame) {
+        const double src_pos = static_cast<double>(frame) / ratio;
+        const std::size_t a = std::min<std::size_t>(source.frame_count() - 1u, static_cast<std::size_t>(src_pos));
+        const std::size_t b = std::min<std::size_t>(source.frame_count() - 1u, a + 1u);
+        const float t = static_cast<float>(src_pos - static_cast<double>(a));
+        for (std::size_t ch = 0; ch < result.channels; ++ch) {
+            const float va = source.samples[a * result.channels + ch];
+            const float vb = source.samples[b * result.channels + ch];
+            result.samples[frame * result.channels + ch] = va + (vb - va) * t;
+        }
+    }
+    return result;
+}
+
+PcmAudio normalize_format(PcmAudio audio, std::uint32_t target_rate, std::uint16_t target_channels) {
+    if (!audio.valid()) throw std::runtime_error("EtherAssemble resolver returned invalid PCM audio");
+    audio = convert_channels(audio, target_channels);
+    audio = convert_sample_rate(audio, target_rate);
+    return audio;
+}
+
+void append_with_crossfade(std::vector<float>& output, const PcmAudio& segment,
+                           double requested_crossfade_seconds, AssembleSlotResult& slot_result) {
     const std::size_t channels = segment.channels;
     const std::size_t segment_frames = segment.frame_count();
     const std::size_t output_frames_before = output.size() / channels;
-    const std::size_t requested_fade = static_cast<std::size_t>(std::llround(
-        std::max(0.0, requested_crossfade_seconds) * segment.sample_rate));
+    const std::size_t requested_fade = static_cast<std::size_t>(std::llround(std::max(0.0, requested_crossfade_seconds) * segment.sample_rate));
     const std::size_t fade_frames = std::min({requested_fade, output_frames_before, segment_frames});
-
     const std::size_t slot_start_frame = output_frames_before - fade_frames;
     slot_result.output_start_seconds = static_cast<double>(slot_start_frame) / segment.sample_rate;
 
@@ -125,46 +156,29 @@ void append_with_crossfade(
                 output[dst] = output[dst] * (1.0f - t) + segment.samples[src] * t;
             }
         }
-        output.insert(
-            output.end(),
-            segment.samples.begin() + static_cast<std::ptrdiff_t>(fade_frames * channels),
-            segment.samples.end());
+        output.insert(output.end(), segment.samples.begin() + static_cast<std::ptrdiff_t>(fade_frames * channels), segment.samples.end());
     }
-
-    slot_result.output_end_seconds =
-        static_cast<double>(output.size() / channels) / segment.sample_rate;
+    slot_result.output_end_seconds = static_cast<double>(output.size() / channels) / segment.sample_rate;
 }
 
 void write_pcm16_wav(const std::filesystem::path& path, const PcmAudio& audio) {
     if (!audio.valid()) throw std::runtime_error("EtherAssemble cannot write invalid PCM");
     constexpr std::uint16_t bits_per_sample = 16;
-    constexpr std::uint32_t bytes_per_sample = bits_per_sample / 8u;
+    constexpr std::uint32_t bytes_per_sample = 2;
     const std::uint32_t block_align = audio.channels * bytes_per_sample;
     const std::uint64_t data_size_64 = static_cast<std::uint64_t>(audio.frame_count()) * block_align;
-    if (data_size_64 > std::numeric_limits<std::uint32_t>::max() - 36u) {
-        throw std::runtime_error("EtherAssemble output exceeds RIFF/WAVE size limit");
-    }
+    if (data_size_64 > std::numeric_limits<std::uint32_t>::max() - 36u) throw std::runtime_error("EtherAssemble output exceeds RIFF/WAVE size limit");
 
     std::error_code ec;
     if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) throw std::runtime_error("EtherAssemble could not create output WAV");
-
     const auto data_size = static_cast<std::uint32_t>(data_size_64);
-    out.write("RIFF", 4);
-    write_u32_le(out, 36u + data_size);
-    out.write("WAVE", 4);
-    out.write("fmt ", 4);
-    write_u32_le(out, 16u);
-    write_u16_le(out, 1u);
-    write_u16_le(out, audio.channels);
-    write_u32_le(out, audio.sample_rate);
-    write_u32_le(out, audio.sample_rate * block_align);
-    write_u16_le(out, static_cast<std::uint16_t>(block_align));
-    write_u16_le(out, bits_per_sample);
-    out.write("data", 4);
-    write_u32_le(out, data_size);
-
+    out.write("RIFF", 4); write_u32_le(out, 36u + data_size); out.write("WAVE", 4);
+    out.write("fmt ", 4); write_u32_le(out, 16u); write_u16_le(out, 1u); write_u16_le(out, audio.channels);
+    write_u32_le(out, audio.sample_rate); write_u32_le(out, audio.sample_rate * block_align);
+    write_u16_le(out, static_cast<std::uint16_t>(block_align)); write_u16_le(out, bits_per_sample);
+    out.write("data", 4); write_u32_le(out, data_size);
     for (float sample : audio.samples) {
         sample = std::clamp(sample, -1.0f, 1.0f);
         const auto pcm = static_cast<std::int16_t>(std::lrint(sample * 32767.0f));
@@ -176,9 +190,8 @@ void write_pcm16_wav(const std::filesystem::path& path, const PcmAudio& audio) {
 void write_manifest(const ArrangementPlan& plan, const AssembleResult& result) {
     std::ofstream out(result.manifest_path, std::ios::binary | std::ios::trunc);
     if (!out) throw std::runtime_error("EtherAssemble could not create manifest");
-    out << std::fixed << std::setprecision(6);
-    out << "{\n"
-        << "  \"schema\": \"etherbeat.assemble.v1\",\n"
+    out << std::fixed << std::setprecision(6)
+        << "{\n  \"schema\": \"etherbeat.assemble.v1\",\n"
         << "  \"source_audio\": \"" << escape_json(plan.source_audio.generic_string()) << "\",\n"
         << "  \"arrangement_revision\": " << plan.revision << ",\n"
         << "  \"output_audio\": \"" << escape_json(result.audio_path.generic_string()) << "\",\n"
@@ -209,13 +222,11 @@ std::filesystem::path ether_assemble_manifest_path(const std::filesystem::path& 
     return std::filesystem::path(audio_path.wstring() + L".etherassemble.json");
 }
 
-AssembleResult EtherAssemble::render(
-    const ArrangementPlan& plan,
-    const std::filesystem::path& output_audio_path,
-    const AssemblyAudioDecoder& decoder,
-    const AssemblyPlaceholderResolver& placeholder_resolver,
-    AssembleOptions options) const {
-
+AssembleResult EtherAssemble::render(const ArrangementPlan& plan,
+                                     const std::filesystem::path& output_audio_path,
+                                     const AssemblyAudioDecoder& decoder,
+                                     const AssemblyPlaceholderResolver& placeholder_resolver,
+                                     AssembleOptions options) const {
     if (plan.slots.empty()) throw std::runtime_error("EtherAssemble arrangement plan has no slots");
     if (output_audio_path.empty()) throw std::runtime_error("EtherAssemble output path is empty");
     if (!decoder) throw std::runtime_error("EtherAssemble requires an audio decoder");
@@ -224,8 +235,16 @@ AssembleResult EtherAssemble::render(
     std::optional<PcmAudio> decoded_source;
     std::uint32_t target_rate = 0;
     std::uint16_t target_channels = 0;
-    std::vector<float> output_samples;
 
+    const bool needs_source = std::any_of(plan.slots.begin(), plan.slots.end(), [](const ArrangementSlot& slot) { return slot.has_source_audio(); });
+    if (needs_source) {
+        decoded_source = decoder(plan.source_audio);
+        if (!decoded_source->valid()) throw std::runtime_error("EtherAssemble could not decode source audio");
+        target_rate = decoded_source->sample_rate;
+        target_channels = decoded_source->channels;
+    }
+
+    std::vector<float> output_samples;
     AssembleResult result;
     result.audio_path = output_audio_path;
     result.manifest_path = ether_assemble_manifest_path(output_audio_path);
@@ -234,37 +253,24 @@ AssembleResult EtherAssemble::render(
     for (const auto& slot : plan.slots) {
         PcmAudio segment;
         bool generated = false;
-
         if (slot.has_source_audio()) {
-            if (!decoded_source) {
-                decoded_source = decoder(plan.source_audio);
-                if (!decoded_source->valid()) throw std::runtime_error("EtherAssemble could not decode source audio");
-            }
             segment = slice_audio(*decoded_source, slot.source_start_seconds, slot.source_end_seconds);
         } else {
             if (!placeholder_resolver) {
-                if (options.require_all_placeholders) {
-                    throw std::runtime_error("EtherAssemble arrangement contains unresolved placeholder: " + slot.label);
-                }
+                if (options.require_all_placeholders) throw std::runtime_error("EtherAssemble arrangement contains unresolved placeholder: " + slot.label);
                 continue;
             }
             const auto resolved = placeholder_resolver(slot, expected_placeholder_duration(plan, slot));
             if (!resolved || !resolved->valid()) {
-                if (options.require_all_placeholders) {
-                    throw std::runtime_error("EtherAssemble placeholder resolver failed: " + slot.label);
-                }
+                if (options.require_all_placeholders) throw std::runtime_error("EtherAssemble placeholder resolver failed: " + slot.label);
                 continue;
             }
             segment = *resolved;
             generated = true;
         }
 
-        if (target_rate == 0) {
-            target_rate = segment.sample_rate;
-            target_channels = segment.channels;
-        } else {
-            validate_format(segment, target_rate, target_channels);
-        }
+        if (target_rate == 0) { target_rate = segment.sample_rate; target_channels = segment.channels; }
+        segment = normalize_format(std::move(segment), target_rate, target_channels);
 
         AssembleSlotResult slot_result;
         slot_result.slot_id = slot.slot_id;
@@ -276,18 +282,11 @@ AssembleResult EtherAssemble::render(
         result.slots.push_back(std::move(slot_result));
     }
 
-    if (result.slots.empty() || output_samples.empty()) {
-        throw std::runtime_error("EtherAssemble produced no audio slots");
-    }
-
-    PcmAudio assembled;
-    assembled.sample_rate = target_rate;
-    assembled.channels = target_channels;
-    assembled.samples = std::move(output_samples);
+    if (result.slots.empty() || output_samples.empty()) throw std::runtime_error("EtherAssemble produced no audio slots");
+    PcmAudio assembled{target_rate, target_channels, std::move(output_samples)};
     result.sample_rate = target_rate;
     result.channels = target_channels;
     result.duration_seconds = assembled.duration_seconds();
-
     write_pcm16_wav(result.audio_path, assembled);
     write_manifest(plan, result);
     return result;

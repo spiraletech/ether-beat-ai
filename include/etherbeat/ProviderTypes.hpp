@@ -21,13 +21,19 @@ enum class ProviderCapability : std::uint32_t {
     Extend             = 1u << 2,
     AudioToAudio       = 1u << 3,
     ReferenceAudio     = 1u << 4,
+    ReplaceSection     = 1u << 5,
 
     DraftRole          = 1u << 8,
     QualityRole        = 1u << 9,
     ControlRole        = 1u << 10,
     VocalRole          = 1u << 11,
 
-    LocalRuntime       = 1u << 16
+    LocalRuntime       = 1u << 16,
+    DrumConditioning   = 1u << 17,
+    MelodyConditioning = 1u << 18,
+    HarmonyConditioning= 1u << 19,
+    ComponentLocks     = 1u << 20,
+    TemporalControl    = 1u << 21
 };
 
 using ProviderCapabilities = std::uint32_t;

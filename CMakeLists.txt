@@ -25,6 +25,7 @@ add_library(etherbeat_core STATIC
     src/core/EtherSearch.cpp
     src/core/EtherPromote.cpp
     src/core/AceStepRequestCodec.cpp
+    src/core/MusicTrinityAdapter.cpp
     src/backends/MockWaveBackend.cpp
 )
 
@@ -111,17 +112,23 @@ if(BUILD_TESTING)
     target_link_libraries(etherbeat_ace_control_smoke PRIVATE etherbeat_core)
     add_test(NAME etherbeat_ace_control_smoke COMMAND etherbeat_ace_control_smoke)
 
+    add_executable(etherbeat_music_trinity_smoke tests/MusicTrinitySmoke.cpp)
+    target_link_libraries(etherbeat_music_trinity_smoke PRIVATE etherbeat_core)
+    add_test(NAME etherbeat_music_trinity_smoke COMMAND etherbeat_music_trinity_smoke)
+
     if(MSVC)
         target_compile_options(etherbeat_core_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_search_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_auto_promote_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_control_smoke PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(etherbeat_ace_control_smoke PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(etherbeat_music_trinity_smoke PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(etherbeat_core_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_search_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_auto_promote_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(etherbeat_ace_control_smoke PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(etherbeat_music_trinity_smoke PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()
